@@ -4,31 +4,38 @@ A Python script to create, destroy, and list Firecracker microVMs with automatic
 
 ## Setup
 
-### 1. Create Python Environment
+### 1. Make Wrapper Script Executable
 
 ```bash
-# Create a virtual environment
-python3 -m venv firecracker-env
-
-# Activate the environment
-source firecracker-env/bin/activate  # On Linux/macOS
-# or
-firecracker-env\Scripts\activate     # On Windows
+chmod +x fcm
 ```
 
-### 2. Install Dependencies
+### 2. Ready to Use - Zero Configuration Required!
 
+**The `fcm` wrapper script handles everything automatically:**
+
+✅ **Virtual Environment**: Creates `venv/` directory if it doesn't exist  
+✅ **Dependency Installation**: Automatically installs `requests` and `requests-unixsocket`  
+✅ **Environment Activation**: Activates the virtual environment before execution  
+✅ **Smart Detection**: Only installs missing packages, skips if already installed  
+
+**First run** (fresh setup):
 ```bash
-pip install requests requests-unixsocket
+./fcm create --name myvm --rootfs disk.ext4 --tap-ip 172.16.0.1 --vm-ip 172.16.0.2
+# Output: Creating Python virtual environment...
+#         Installing missing Python modules: requests requests-unixsocket
+#         [VM creation proceeds...]
 ```
 
-### 3. Make Script Executable
-
+**Subsequent runs** (environment ready):
 ```bash
-chmod +x firecracker_vm_manager.py
+./fcm list
+# No setup messages, runs immediately
 ```
 
-### 4. Configure Environment (Optional)
+**No manual Python environment management needed** - just run `./fcm` and it works!
+
+### 3. Configure Environment (Optional)
 
 Create a `.env` file in the same directory as the script to set default configuration values:
 
@@ -61,7 +68,7 @@ The script supports three main actions: **create**, **destroy**, and **list** VM
 ### Create a VM (Simplest Form)
 
 ```bash
-./firecracker_vm_manager.py create \
+./fcm create \
   --name myvm \
   --kernel vmlinux \
   --rootfs rootfs.ext4 \
@@ -74,7 +81,7 @@ This will automatically generate TAP devices (tap0 for main interface, tap1 for 
 ### Create a VM with Specific TAP Devices
 
 ```bash
-./firecracker_vm_manager.py create \
+./fcm create \
   --name myvm \
   --kernel vmlinux \
   --rootfs rootfs.ext4 \
@@ -87,7 +94,7 @@ This will automatically generate TAP devices (tap0 for main interface, tap1 for 
 ### Create a VM with Custom Resources
 
 ```bash
-./firecracker_vm_manager.py create \
+./fcm create \
   --name myvm \
   --kernel vmlinux \
   --rootfs rootfs.ext4 \
@@ -100,19 +107,19 @@ This will automatically generate TAP devices (tap0 for main interface, tap1 for 
 ### List Running VMs
 
 ```bash
-./firecracker_vm_manager.py list
+./fcm list
 ```
 
 ### Destroy a VM
 
 ```bash
-./firecracker_vm_manager.py destroy --name myvm
+./fcm destroy --name myvm
 ```
 
 ### Get Help
 
 ```bash
-./firecracker_vm_manager.py --help
+./fcm --help
 ```
 
 ## Parameters
@@ -201,13 +208,13 @@ The script automatically manages TAP device creation and assignment:
 **Auto-generation (recommended):**
 ```bash
 # Creates tap0 (main) and tap1 (MMDS) automatically
-./firecracker_vm_manager.py create --name vm1 --rootfs disk.ext4 --tap-ip 192.168.1.1 --vm-ip 10.0.1.1
+./fcm create --name vm1 --rootfs disk.ext4 --tap-ip 192.168.1.1 --vm-ip 10.0.1.1
 ```
 
 **Explicit specification:**
 ```bash
 # Uses specified devices (fails if they already exist)
-./firecracker_vm_manager.py create --name vm1 --tap-device tap5 --mmds-tap tap6 --rootfs disk.ext4 --tap-ip 192.168.1.1 --vm-ip 10.0.1.1
+./fcm create --name vm1 --tap-device tap5 --mmds-tap tap6 --rootfs disk.ext4 --tap-ip 192.168.1.1 --vm-ip 10.0.1.1
 ```
 
 ## Metadata Service (MMDS)
@@ -237,7 +244,7 @@ All VMs automatically receive a `network_config` object containing:
 
 **Basic VM (network config only):**
 ```bash
-./firecracker_vm_manager.py create \
+./fcm create \
   --name myvm \
   --rootfs rootfs.ext4 \
   --tap-ip 172.16.0.1 \
@@ -246,7 +253,7 @@ All VMs automatically receive a `network_config` object containing:
 
 **With custom metadata:**
 ```bash
-./firecracker_vm_manager.py create \
+./fcm create \
   --name myvm \
   --rootfs rootfs.ext4 \
   --tap-ip 172.16.0.1 \
@@ -271,7 +278,7 @@ cat > metadata.json << EOF
 EOF
 
 # Use metadata file
-./firecracker_vm_manager.py create \
+./fcm create \
   --name myvm \
   --rootfs rootfs.ext4 \
   --tap-ip 172.16.0.1 \
@@ -336,7 +343,7 @@ The `list` action provides comprehensive information about running VMs by connec
 ### List Output Example
 
 ```bash
-./firecracker_vm_manager.py list
+./fcm list
 ```
 
 ```
@@ -375,7 +382,7 @@ vm2     | 10.4.17.2   | 2    | 512 MiB | ubuntu.ext4     | vmlinux         | tap
 
 2. **Create first VM (gets tap0/tap1):**
    ```bash
-   ./firecracker_vm_manager.py create \
+   ./fcm create \
      --name vm1 \
      --rootfs alpine.ext4 \
      --tap-ip 192.168.1.1 \
@@ -384,7 +391,7 @@ vm2     | 10.4.17.2   | 2    | 512 MiB | ubuntu.ext4     | vmlinux         | tap
 
 3. **Create second VM (gets tap2/tap3):**
    ```bash
-   ./firecracker_vm_manager.py create \
+   ./fcm create \
      --name vm2 \
      --rootfs ubuntu.ext4 \
      --tap-ip 192.168.1.2 \
@@ -393,20 +400,20 @@ vm2     | 10.4.17.2   | 2    | 512 MiB | ubuntu.ext4     | vmlinux         | tap
 
 4. **List running VMs:**
    ```bash
-   ./firecracker_vm_manager.py list
+   ./fcm list
    ```
 
 5. **Destroy VMs:**
    ```bash
-   ./firecracker_vm_manager.py destroy --name vm1
-   ./firecracker_vm_manager.py destroy --name vm2
+   ./fcm destroy --name vm1
+   ./fcm destroy --name vm2
    ```
 
 ### Creating VMs in Foreground Mode (for debugging)
 
 1. **Create and start a VM in foreground:**
    ```bash
-   ./firecracker_vm_manager.py create \
+   ./fcm create \
      --name myvm \
      --kernel vmlinux \
      --rootfs rootfs.ext4 \

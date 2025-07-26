@@ -65,7 +65,7 @@ From the documentation review, these are the critical API details:
 
 ## Project Overview
 
-The Firecracker VM Manager is a Python script that automates the creation, destruction, and listing of Firecracker microVMs with full lifecycle management including:
+The Firecracker VM Manager is a Python script with a bash wrapper (`fcm`) that automates the creation, destruction, and listing of Firecracker microVMs with full lifecycle management including:
 - Automatic supervisord integration for process management
 - TAP device auto-generation and network configuration
 - Complete resource cleanup
@@ -75,8 +75,17 @@ The Firecracker VM Manager is a Python script that automates the creation, destr
 
 ## Key Files
 
+### Wrapper Script: `fcm`
+- **Purpose**: Bash wrapper script providing zero-configuration Python environment management
+- **Auto-Installation**: Creates virtual environment and installs dependencies automatically
+- **Smart Detection**: Uses correct import names for module checking (`requests_unixsocket` vs `requests-unixsocket`)
+- **Location**: Root directory alongside `firecracker_vm_manager.py`
+- **Usage**: Primary entry point for all VM operations (`./fcm create`, `./fcm list`, etc.)
+- **First Run**: Sets up complete Python environment automatically
+- **Subsequent Runs**: Uses existing environment with no setup overhead
+
 ### Main Script: `firecracker_vm_manager.py`
-- **Purpose**: Main executable script for VM lifecycle management
+- **Purpose**: Core Python script for VM lifecycle management (executed by `fcm` wrapper)
 - **Actions**: `create`, `destroy`, and `list` VMs
 - **Dependencies**: `requests`, `requests-unixsocket`, `subprocess`, `os`, `pathlib`
 - **Requires**: Root/sudo access for network configuration and supervisor management
@@ -181,13 +190,13 @@ The Firecracker VM Manager is a Python script that automates the creation, destr
 **Auto-generation (default):**
 ```bash
 # Creates tap0 (main) and tap1 (MMDS) automatically
-./firecracker_vm_manager.py create --name vm1 --rootfs disk.ext4 --tap-ip 192.168.1.1 --vm-ip 10.0.1.1
+./fcm create --name vm1 --rootfs disk.ext4 --tap-ip 192.168.1.1 --vm-ip 10.0.1.1
 ```
 
 **Explicit specification:**
 ```bash
 # Uses specified devices (fails if they already exist)
-./firecracker_vm_manager.py create --name vm1 --tap-device tap5 --mmds-tap tap6 --rootfs disk.ext4 --tap-ip 192.168.1.1 --vm-ip 10.0.1.1
+./fcm create --name vm1 --tap-device tap5 --mmds-tap tap6 --rootfs disk.ext4 --tap-ip 192.168.1.1 --vm-ip 10.0.1.1
 ```
 
 ### Socket Path Management (NEW)
@@ -248,6 +257,14 @@ The Firecracker VM Manager is a Python script that automates the creation, destr
 - `create`: Create and start a new VM
 - `destroy`: Stop and destroy an existing VM
 - `list`: List all running VMs with configuration details (NEW)
+
+### Primary Usage
+All commands are executed through the `fcm` wrapper script:
+```bash
+./fcm create --name myvm --rootfs disk.ext4 ...
+./fcm list
+./fcm destroy --name myvm
+```
 
 ### Parameters
 
@@ -404,7 +421,31 @@ autostart=true
 
 ## Dependencies
 
-### Python Packages
+### Automatic Python Environment Management
+The `fcm` wrapper script provides **zero-configuration** Python environment management:
+
+#### Auto-Installation Features
+- **Virtual Environment**: Automatically creates `venv/` directory on first run
+- **Smart Dependency Detection**: Checks for required modules using correct import names
+- **Automatic Installation**: Installs missing packages (`requests`, `requests-unixsocket`) 
+- **Skip Existing**: Only installs packages that aren't already present
+- **Seamless Execution**: Handles all environment setup transparently
+
+#### First Run Experience
+```bash
+./fcm create --name vm1 --rootfs disk.ext4 --tap-ip 192.168.1.1 --vm-ip 10.0.1.1
+# Output: Creating Python virtual environment...
+#         Installing missing Python modules: requests requests-unixsocket
+#         [Continues with VM creation...]
+```
+
+#### Subsequent Runs
+```bash
+./fcm list
+# No setup output - runs immediately with existing environment
+```
+
+### Manual Installation (if not using fcm wrapper)
 ```bash
 pip install requests requests-unixsocket
 ```
@@ -638,15 +679,17 @@ If the GitHub links become unavailable, you can:
 ## Project Status Summary
 
 ### Recently Implemented Features (Latest Session)
-1. **TAP Device Auto-Generation**: Complete system for automatic TAP device discovery and assignment
-2. **Socket Path Configuration**: SOCKET_PATH_PREFIX environment variable for configurable socket directories
-3. **VM Listing and Monitoring**: Comprehensive list command with API querying and table display
-4. **Enhanced Network Management**: TAP device IP resolution and display
-5. **Session-Based Conflict Prevention**: Tracks allocated devices within script execution
-6. **Validation System**: Checks for existing devices when explicitly specified
-7. **Always-On MMDS**: All VMs now get MMDS with network configuration
+1. **FCM Wrapper Script**: Bash wrapper that auto-manages Python virtual environment and dependencies
+2. **TAP Device Auto-Generation**: Complete system for automatic TAP device discovery and assignment
+3. **Socket Path Configuration**: SOCKET_PATH_PREFIX environment variable for configurable socket directories
+4. **VM Listing and Monitoring**: Comprehensive list command with API querying and table display
+5. **Enhanced Network Management**: TAP device IP resolution and display
+6. **Session-Based Conflict Prevention**: Tracks allocated devices within script execution
+7. **Validation System**: Checks for existing devices when explicitly specified
+8. **Always-On MMDS**: All VMs now get MMDS with network configuration
 
 ### Current Capabilities
+- **Zero-Setup Execution**: `fcm` wrapper handles all environment and dependency management
 - **Full VM Lifecycle**: Create, destroy, and list VMs
 - **Automatic Network Setup**: TAP device auto-generation and configuration
 - **Production Ready**: Supervisor integration with configurable paths
