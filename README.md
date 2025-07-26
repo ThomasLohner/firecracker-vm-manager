@@ -1,40 +1,61 @@
 # Firecracker VM Manager (fcm)
+A comprehensive Python script for managing Firecracker microVMs with automatic `supervisord` integration and network configuration.
 
-A comprehensive Python script for managing Firecracker microVMs with automatic supervisord integration and network configuration.
 
-## AI disclaimer
->This Tool was built with Claude AI. Using **AI Tools** makes our life easy. However, as a developer it's super important to still understand how things work under hood. Please read this quick summary to understand the core concepts of Firecracker. If you already know Firecracker you can skip to [firecracker_vm_manager.md](firecracker_vm_manager.md)
+## ⚠️ AI Disclaimer
+> This tool was built with the help of Claude AI. AI tools make our lives easier—but **understanding what happens under the hood** is crucial if you're a developer.  
+>
+> Please read the following quick summary to grasp the core ideas behind Firecracker. If you're already familiar, jump straight to [firecracker_vm_manager.md](firecracker_vm_manager.md)
 
-## What is Firecracker?
 
-Firecracker is an open source virtualization technology that is purpose-built for creating and managing secure, multi-tenant container and function-based services that provide serverless operational models. Firecracker runs workloads in lightweight virtual machines, called microVMs, which combine the security and isolation properties provided by hardware virtualization technology with the speed and flexibility of containers.
+## 📚 Table of Contents
 
-*Useful Links:*
->Web: https://firecracker-microvm.github.io\
-  Code: https://github.com/firecracker-microvm/firecracker/\
-  Docs: https://github.com/firecracker-microvm/firecracker/tree/main/docs\
-  Copy & Paste Getting Started Guide: https://github.com/firecracker-microvm/firecracker/blob/main/docs/getting-started.md
+- [What is Firecracker?](#-what-is-firecracker)
+- [Core Concepts](#-core-concepts)
+- [Networking Basics](#-networking-basics)
+- [Launch Your First VM](#launch-your-first-vm-)
+  - [1. Download Firecracker Binary](#1-download-firecracker-binary)
+  - [2. Create a tap Device on Host](#2-create-a-tap-device-on-host)
+  - [3. Download Kernel Image](#3-download-kernel-image)
+  - [4. Create Root Filesystem](#4-create-root-filesystem)
+  - [5. Create VM Config File](#5-create-vm-config-file)
+  - [6. Start the VM](#6-start-the-vm)
+  - [7. Connect via SSH](#7-connect-via-ssh)
+- [Next Steps: Use firecracker_vm_manager.py](#-next-steps-use-firecracker_vm_managerpy)
+- [Advanced Topics](#-advanced-topics)
+- [Illustrations](#-illustrations)
 
-## Core Concepts
-* Each **process instance** of the firecracker binary represents a vm
-* Each **vm** has a dedicated api listening on a socket (i.e. */tmp/vm1.sock*)
-* Starting the firecracker process **does not start the vm**
-* The **running** process is configured with *boot image, rootFS, network device, cpu & memory* etc. via `curl --unix-socket /tmp/vm1.sock ...`
-* The api endpoint `InstanceStart` boots the vm
-* `reboot` inside the vm shuts it down and exits the firecracker process
-* The socket file must be removed by hand after firecracker proccess exits
-* To immedieatly boot the vm when starting the process use `firecracker --config-file`
+## 🔥 What is Firecracker?
+Firecracker is an open-source virtualization technology built for running serverless workloads in **microVMs**—lightweight, fast-booting VMs with excellent isolation. It's used by AWS Lambda and other modern systems to blend the performance of containers with the isolation of VMs.
 
-## Networking
-* Create a dedicated `tap` interface on the host for each vm
-* Apply *firewall / routing / MASQUERADE* rules to this interface
-* Start a vm that attaches to this interface
-* After **each** boot the guest network interface inside the vm does not have any routing info and no nameserver in `/etc/resolv.conf`
+**Useful Links:**
+🔗 [Website](https://firecracker-microvm.github.io)
+🧑‍💻 [GitHub Repository](https://github.com/firecracker-microvm/firecracker/)
+📚 [Docs](https://github.com/firecracker-microvm/firecracker/tree/main/docs)
+🚀 [Getting Started Guide](https://github.com/firecracker-microvm/firecracker/blob/main/docs/getting-started.md)
+
+## 🧠 Core Concepts
+- Each **Firecracker process** represents a single VM.
+- Each VM has a **dedicated API socket**, e.g. `/tmp/vm1.sock`.
+- **Starting the Firecracker process does not boot the VM**. You must configure it via the API first.
+- VM configuration (kernel, drives, network, etc.) is done via `curl` to the socket.
+- You start the VM using the `InstanceStart` API call.
+- **Rebooting from inside the VM shuts it down** and exits the Firecracker process.
+- You need to manually **remove the socket file** after Firecracker exits.
+- To boot automatically, pass a JSON config to `firecracker --config-file`.
+
+## 🌐 Networking Basics
+- Create a dedicated `tap` device for each VM.
+- Apply routing, firewall, and NAT (`MASQUERADE`) rules on this interface.
+- VMs attach to this `tap` device.
+- After every boot, the guest VM has:
+  - No default route
+  - No DNS config (`/etc/resolv.conf` is empty)
 
 ## Launch your first VM 🚀
 
-### 1. Download the binary
-(see [releases](https://github.com/firecracker-microvm/firecracker/releases) for latest version)
+### 1. Download Firecracker Binary
+Go to the [Releases](https://github.com/firecracker-microvm/firecracker/releases) and download the latest version.
 ```bash
 wget https://github.com/firecracker-microvm/firecracker/releases/download/v1.12.1/firecracker-v1.12.1-x86_64.tgz
 
@@ -47,7 +68,7 @@ cp release-v1.12.1-x86_64/jailer-v1.12.1-x86_64 /usr/sbin/jailer
 rm -rf release-v1.12.1-x86_64 firecracker-v1.12.1-x86_64.tgz
 ```
 
-### 2. Create `tap` device on host and apply IP config
+### 2. Create a tap device on host
 Run the following commands as `root`:
 ```bash
 ip tuntap add dev tap0 mode tap
@@ -61,15 +82,15 @@ echo 1 > /proc/sys/net/ipv4/ip_forward
 sudo iptables -t nat -A POSTROUTING -o <YOUR_EXTERNAL_HOST_IFACE> -j MASQUERADE
 ```
 
-### 3. Download kernelimage
-(see [getting-a-rootfs-and-guest-kernel-image](https://github.com/firecracker-microvm/firecracker/blob/main/docs/getting-started.md#getting-a-rootfs-and-guest-kernel-image ) for latest version)
+### 3. Download Kernel Image
+Use a prebuilt kernel, see [getting-a-rootfs-and-guest-kernel-image](https://github.com/firecracker-microvm/firecracker/blob/main/docs/getting-started.md#getting-a-rootfs-and-guest-kernel-image ) for latest version.
 ```bash
 cd /root
 wget https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.12/x86_64/vmlinux-6.1.128
 ```
 
-### 4. Create RootFS
-(see [getting-a-rootfs-and-guest-kernel-image](https://github.com/firecracker-microvm/firecracker/blob/main/docs/getting-started.md#getting-a-rootfs-and-guest-kernel-image ) for latest version)
+### 4. Create Root Filesystem
+Use prebuilt Ubuntu Images for Firecracker, see [getting-a-rootfs-and-guest-kernel-image](https://github.com/firecracker-microvm/firecracker/blob/main/docs/getting-started.md#getting-a-rootfs-and-guest-kernel-image ) for latest version.
 ```bash
 cd /root
 
@@ -88,7 +109,7 @@ truncate -s 1g ubuntu-vm1.ext4
 mkfs.ext4 -d squashfs-root -F ubuntu-vm1.ext4
 ```
 
-### 5. Create a config file for the vm called
+### 5. Create VM config file
 `/root/vm1.conf.json`
 ```json
 {
@@ -135,15 +156,16 @@ mkfs.ext4 -d squashfs-root -F ubuntu-vm1.ext4
 "entropy": null
 }
 ```
-*Note: There is a script called `fcnet-setup.sh` preconfigured in the Ubuntu Image that will calculate and setup the vm's internal IP based on the configuered MAC address. If you build custom images you need to mimic this behavoir or you can inject metadata into a vm using [mmds](https://github.com/firecracker-microvm/firecracker/blob/main/docs/mmds/mmds-user-guide.md).*
+*📝 Note: The Ubuntu image includes a script `fcnet-setup.sh` that calculates the internal IP from the MAC address. For custom images, you’ll need to replicate that logic or inject metadata via [MMDS](https://github.com/firecracker-microvm/firecracker/blob/main/docs/mmds/mmds-user-guide.md)..*
 
-### 6. Finally start the VM
-```
+### 6. Start the VM
+```bash
 firecracker --api-sock /tmp/vm1.sock --config-file vm1.conf.json
 ```
 
-### 7. In an new terminal window try to connect via ssh
-```
+### 7. Connect via ssh
+If you have added your ssh key, in a new terminal window connect to the vm:
+```bash
 # after you added your ssh key to the vm
 ssh root@172.16.0.2
 
@@ -158,11 +180,73 @@ ping www.google.de -c 3
 # shut down vm
 reboot
 ```
-*Note: Default routes and nameservers will be empty after every reboot.*
+*🔁 Note: Default route and DNS must be set after every reboot unless automated via cloud-init or similar.*
 
-## Start using fircracker_vm_manager.py
-Congrats! Now you're ready to head Head over to [firecracker_vm_manager.md](firecracker_vm_manager.md) and have FCM do all the heavy lifting for you.
+## 🧰 Next Steps: Use firecracker_vm_manager.py
+Congrats! You’ve booted your first VM manually! 🎉  
+Now head over to [firecracker_vm_manager.md](firecracker_vm_manager.md) to automate everything with FCM.
 
-## Advanced Topics
+## 🛠️ Advanced Topics
 * [Build Custom Kernel](Build_custom_kernel.md)
 * [Build Custom rootFS (Images)](Build_custom_rootfs.md)
+
+## 🖼️ Illustrations
+### Firecracker VM Lifecycle
+```
+             +----------------------------+
+             |  Start Firecracker Process |
+             |  (creates API socket)      |
+             +------------+---------------+
+                          |
+                          v
+             +----------------------------+
+             |  Configure via API socket  |
+             |  - Kernel                  |
+             |  - RootFS                  |
+             |  - CPU / Memory            |
+             |  - Network Interface       |
+             +------------+---------------+
+                          |
+                          v
+             +----------------------------+
+             |  Call `InstanceStart`      |
+             |  (boots microVM)           |
+             +------------+---------------+
+                          |
+                          v
+             +----------------------------+
+             |  Guest OS boots            |
+             |  - `init` starts           |
+             |  - No default route        |
+             |  - No DNS configured       |
+             +------------+---------------+
+                          |
+                          v
+             +----------------------------+
+             |  Inside VM: `reboot`       |
+             |  Firecracker process exits |
+             |  Socket needs cleanup      |
+             +----------------------------+
+```
+
+## 🌐 Network Setup (tap0 + NAT)
+```
+                    [ External Network ]
+                            |
+                            v
+                +------------------------+
+                |  Host Network Interface|
+                |  (eth0, wlan0, etc.)   |
+                +-----------+------------+
+                            |
+                MASQUERADE NAT via iptables
+                            |
+                            v
++----------------------+        +----------------------+
+| Guest VM             |        | Host Machine         |
+|----------------------|        |----------------------|
+| eth0: 172.16.0.2     |   <->  | tap0: 172.16.0.1     |
+| Gateway: 172.16.0.1  |        | IP forwarding ON     |
+| DNS: 8.8.8.8         |        |                      |
++----------------------+        +----------------------+
+```
