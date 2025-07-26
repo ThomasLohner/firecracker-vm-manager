@@ -4,13 +4,7 @@ A Python script to create, destroy, and list Firecracker microVMs with automatic
 
 ## Setup
 
-### 1. Make Wrapper Script Executable
-
-```bash
-chmod +x fcm
-```
-
-### 2. Ready to Use - Zero Configuration Required!
+### 1. Ready to Use - Zero Configuration Required!
 
 **The `fcm` wrapper script handles everything automatically:**
 
@@ -35,7 +29,7 @@ chmod +x fcm
 
 **No manual Python environment management needed** - just run `./fcm` and it works!
 
-### 3. Configure Environment (Optional)
+### 2. Configure Environment (Optional)
 
 Create a `.env` file in the same directory as the script to set default configuration values:
 
