@@ -7,9 +7,9 @@ This document provides complete context for the Firecracker VM Manager project f
 **CRITICAL**: Future development requires access to these Firecracker documentation sources:
 
 ### Primary Documentation
-- **Getting Started Guide**: https://github.com/firecracker-microvm/firecracker/blob/main/docs/getting-started.md
-- **Network Setup**: https://github.com/firecracker-microvm/firecracker/blob/main/docs/network-setup.md
-- **API Documentation (Swagger)**: https://github.com/firecracker-microvm/firecracker/blob/main/src/firecracker/swagger/firecracker.yaml
+- **Getting Started Guide**: https://raw.githubusercontent.com/firecracker-microvm/firecracker/refs/heads/main/docs/getting-started.md
+- **Network Setup**: https://raw.githubusercontent.com/firecracker-microvm/firecracker/refs/heads/main/docs/network-setup.md
+- **API Documentation (Swagger)**: https://raw.githubusercontent.com/firecracker-microvm/firecracker/refs/heads/main/src/firecracker/swagger/firecracker.yaml
 - **Main Repository**: https://github.com/firecracker-microvm/firecracker
 - **Official Website**: https://firecracker-microvm.github.io
 
@@ -47,6 +47,17 @@ From the documentation review, these are the critical API details:
 - Required: `action_type` (enum: FlushMetrics, InstanceStart, SendCtrlAltDel)
 - Response: 204 (success), 400 (error)
 
+#### VM Config (/vm/config)
+- Method: GET
+- Used for: Getting complete VM configuration (used by list action)
+- Response: 200 (success with JSON configuration), connection error (not listening)
+
+#### MMDS Endpoints (/mmds, /mmds/config)
+- `PUT /mmds` - Set metadata content
+- `GET /mmds` - Get metadata content
+- `PUT /mmds/config` - Configure MMDS interface access
+- Response: 200/204 (success), 400 (error)
+
 #### Root Endpoint (/)
 - Method: GET
 - Used for: Health check/socket availability testing
@@ -54,38 +65,43 @@ From the documentation review, these are the critical API details:
 
 ## Project Overview
 
-The Firecracker VM Manager is a Python script that automates the creation and destruction of Firecracker microVMs with full lifecycle management including:
+The Firecracker VM Manager is a Python script that automates the creation, destruction, and listing of Firecracker microVMs with full lifecycle management including:
 - Automatic supervisord integration for process management
-- TAP device creation and network configuration
+- TAP device auto-generation and network configuration
 - Complete resource cleanup
 - Debugging support via foreground mode
+- VM discovery and monitoring via list command
+- Socket directory management with configurable paths
 
 ## Key Files
 
 ### Main Script: `firecracker_vm_manager.py`
 - **Purpose**: Main executable script for VM lifecycle management
-- **Actions**: `create` and `destroy` VMs
+- **Actions**: `create`, `destroy`, and `list` VMs
 - **Dependencies**: `requests`, `requests-unixsocket`, `subprocess`, `os`, `pathlib`
 - **Requires**: Root/sudo access for network configuration and supervisor management
 
 ### Configuration File: `.env`
 - **Purpose**: Global default configuration values that apply to all VMs
 - **Required Settings**: `KERNEL_PATH`, `CPUS`, `MEMORY` - Must be provided in .env or via command line
+- **New Settings**: `SOCKET_PATH_PREFIX` - Controls socket file directory (default: /tmp)
 - **Priority**: Command line arguments override .env values
 - **Note**: VM-specific parameters (rootfs, network settings) are not configurable in .env
 
 ### Documentation: `firecracker_vm_manager.md`
 - **Purpose**: User documentation with setup instructions, usage examples, and troubleshooting
 - **Sections**: Setup, Prerequisites, Usage, Parameters, Configuration, Workflows, API Reference
+- **Status**: Updated to reflect all current features including TAP auto-generation and list command
 
 ## Architecture Overview
 
 ### Core Classes
 - **FirecrackerVMManager**: Main class handling all VM operations
   - Socket communication with Firecracker API
-  - Network device management
+  - Network device management and auto-generation
   - Supervisor configuration management
   - Process lifecycle management
+  - VM discovery and information extraction
 
 ### Key Methods
 
@@ -93,12 +109,26 @@ The Firecracker VM Manager is a Python script that automates the creation and de
 - `create_vm()`: Main entry point for VM creation
 - `create_vm_supervisor()`: Creates VM using supervisord (default mode)
 - `create_vm_foreground()`: Creates VM in foreground for debugging
-- `destroy_vm()`: Destroys VM and cleans up all resources (including MMDS TAP if provided)
+- `destroy_vm()`: Destroys VM and cleans up all resources (including MMDS TAP)
 - `configure_and_start()`: Configures Firecracker API and starts VM
 
-#### Network Management
+#### TAP Device Management (NEW)
+- `discover_existing_tap_devices()`: Scans system for existing TAP devices
+- `find_next_available_tap_device()`: Generates next available device name (tap0, tap1, etc.)
+- `validate_tap_device_available()`: Checks if explicitly specified devices exist
+- `get_tap_device_ip()`: Extracts IP address from TAP device on system
 - `setup_tap_device()`: Creates TAP device, assigns IP, adds routes
+- `setup_mmds_tap_device()`: Creates MMDS TAP device
 - `remove_tap_device()`: Removes TAP device (routes auto-removed)
+
+#### VM Discovery and Monitoring (NEW)
+- `discover_running_vms()`: Scans socket directory for running VMs
+- `get_vm_config()`: Gets VM configuration via /vm/config API
+- `format_vm_table()`: Formats VM information as a table
+- `_get_mmds_data_for_vm()`: Gets MMDS data for internal IP extraction
+
+#### Network Management
+- All original network methods remain, enhanced with auto-generation
 
 #### Supervisor Integration
 - `create_supervisor_config()`: Creates `/etc/supervisor/conf.d/<vm_name>.conf`
@@ -119,7 +149,7 @@ The Firecracker VM Manager is a Python script that automates the creation and de
 
 ## Current Features
 
-### Two Operation Modes
+### Three Operation Modes
 
 #### 1. Supervisor Mode (Default)
 - Creates supervisor configuration file
@@ -133,70 +163,171 @@ The Firecracker VM Manager is a Python script that automates the creation and de
 - No supervisor configuration
 - Automatic cleanup on termination (Ctrl+C or process exit)
 
+#### 3. List Mode (NEW)
+- Discovers running VMs by scanning socket files
+- Queries VM configuration via API
+- Displays comprehensive table with VM information
+
+### TAP Device Auto-Generation (NEW MAJOR FEATURE)
+
+#### Auto-Generation Features
+- **System Discovery**: Scans existing `tap*` devices using `ip link show`
+- **Sequential Naming**: Generates tap0, tap1, tap2, etc. automatically
+- **Session Tracking**: Prevents conflicts when creating multiple VMs in same session
+- **Validation**: Checks that explicitly specified devices don't already exist
+- **Both Interfaces**: Auto-generates both main TAP and MMDS TAP devices
+
+#### TAP Device Behavior
+**Auto-generation (default):**
+```bash
+# Creates tap0 (main) and tap1 (MMDS) automatically
+./firecracker_vm_manager.py create --name vm1 --rootfs disk.ext4 --tap-ip 192.168.1.1 --vm-ip 10.0.1.1
+```
+
+**Explicit specification:**
+```bash
+# Uses specified devices (fails if they already exist)
+./firecracker_vm_manager.py create --name vm1 --tap-device tap5 --mmds-tap tap6 --rootfs disk.ext4 --tap-ip 192.168.1.1 --vm-ip 10.0.1.1
+```
+
+### Socket Path Management (NEW)
+
+#### SOCKET_PATH_PREFIX Environment Variable
+- **Purpose**: Controls where VM socket files are stored
+- **Default**: `/tmp` (backward compatible)
+- **Recommended**: `/var/run/firecracker` for production
+- **Auto-creation**: Directory created automatically if it doesn't exist
+- **Usage**: Set in .env file as `SOCKET_PATH_PREFIX=/var/run/firecracker`
+
 ### Network Configuration
-- Creates TAP devices if they don't exist
+- Creates TAP devices if they don't exist (with auto-generation)
 - Assigns /32 host IP addresses
 - Installs host routes for VM IPs
 - Handles existing configurations gracefully
 - Automatic route cleanup when TAP device is removed
+- Always creates both main and MMDS TAP devices
 
 ### Resource Management
-- Socket file creation/cleanup
-- TAP device lifecycle management
+- Socket file creation/cleanup in configurable directory
+- TAP device lifecycle management with auto-generation
 - Supervisor configuration management
 - Process monitoring and cleanup
 
-### Metadata Service (MMDS) Support
+### Metadata Service (MMDS) Support (ENHANCED)
+- **Always Enabled**: All VMs now get MMDS with network_config
 - JSON metadata parsing from command line or file
 - Automatic network configuration injection (always includes network_config object)
 - Dual network interface setup with separate TAP devices
-  - eth0 (via --tap-device) for application traffic
-  - mmds0 (via --mmds-tap) for metadata access
+  - eth0 (via main TAP) for application traffic
+  - mmds0 (via MMDS TAP) for metadata access
 - Dedicated MMDS interface configuration via `/mmds/config` endpoint
 - MMDS IP address explicitly configured as 169.254.169.254
 - Support for custom application metadata
+
+### VM Discovery and Monitoring (NEW MAJOR FEATURE)
+
+#### List Command Features
+- **Socket Scanning**: Discovers VMs by finding .sock files in socket directory
+- **API Querying**: Connects to each VM's Firecracker API for configuration
+- **Real-time Data**: Shows current VM state and configuration
+- **Rich Information**: Comprehensive table with all VM details
+
+#### Information Displayed
+- **VM Name**: Extracted from socket filename
+- **Internal IP**: VM's guest IP from MMDS network_config
+- **CPUs**: Number of virtual CPUs from machine-config
+- **Memory**: RAM allocation from machine-config
+- **Rootfs**: Root filesystem filename (path stripped)
+- **Kernel**: Kernel image filename (path stripped)
+- **TAP Interface (IP)**: Main interface device and host IP address
+- **MMDS TAP**: MMDS interface device name
 
 ## Command Line Interface
 
 ### Actions
 - `create`: Create and start a new VM
 - `destroy`: Stop and destroy an existing VM
+- `list`: List all running VMs with configuration details (NEW)
 
 ### Parameters
 
 #### Required
-- `--name`: VM identifier (used in supervisor config)
+- `--name`: VM identifier (not required for list action)
 
 #### Create Action Required
 - `--kernel`: Path to kernel image (vmlinux) - can be set in .env as KERNEL_PATH
 - `--rootfs`: Path to root filesystem image
 - `--cpus`: Number of vCPUs - can be set in .env as CPUS
 - `--memory`: Memory in MiB - can be set in .env as MEMORY
-- `--tap-device`: Host TAP device name
 - `--tap-ip`: IP address for TAP device on host
 - `--vm-ip`: IP address for VM guest
 
-#### Optional Parameters
-- `--socket`: Path to Firecracker API socket (default: `/tmp/<vm_name>.sock`)
+#### Create Action Optional (MAJOR CHANGES)
+- `--tap-device`: Host TAP device name (AUTO-GENERATED if not specified)
+- `--mmds-tap`: TAP device name for MMDS interface (AUTO-GENERATED if not specified)
+- `--socket`: Path to Firecracker API socket (default: `<SOCKET_PATH_PREFIX>/<vm_name>.sock`)
 - `--metadata`: JSON metadata for MMDS (provide JSON string or file path starting with @)
-- `--mmds-tap`: TAP device name for MMDS interface (enables MMDS with network config)
 - `--foreground`: Run in foreground for debugging
 
-#### Destroy Action Required
-- `--tap-device`: TAP device name to remove
+#### Destroy Action Optional (ENHANCED)
+- `--tap-device`: TAP device name to remove (optional with warning if not specified)
+- `--mmds-tap`: MMDS TAP device name to remove (optional)
 
-#### Destroy Action Optional
-- `--mmds-tap`: MMDS TAP device name to remove (if VM was created with metadata)
+#### List Action
+- No additional parameters required
+- Uses socket directory from SOCKET_PATH_PREFIX
 
 ## Firecracker API Integration
 
 ### Endpoints Used
 - `GET /`: Check if Firecracker is listening
+- `GET /vm/config`: Get complete VM configuration (NEW - used by list)
 - `PUT /machine-config`: Set CPU and memory
 - `PUT /boot-source`: Set kernel and boot arguments
 - `PUT /drives/rootfs`: Configure root filesystem
-- `PUT /network-interfaces/eth0`: Configure network interface
+- `PUT /network-interfaces/eth0`: Configure primary network interface
+- `PUT /network-interfaces/mmds0`: Configure MMDS network interface (ALWAYS used now)
+- `PUT /mmds/config`: Configure MMDS interface access (ALWAYS used now)
+- `PUT /mmds`: Set metadata content (ALWAYS used now)
+- `GET /mmds`: Get metadata content (NEW - used by list for internal IP)
 - `PUT /actions`: Start the VM (action_type: "InstanceStart")
+
+### API Response Structure (CRITICAL for list functionality)
+
+#### /vm/config Response Format
+```json
+{
+  "drives": [
+    {
+      "drive_id": "rootfs",
+      "is_root_device": true,
+      "path_on_host": "/root/vm2-alpine.ext4"
+    }
+  ],
+  "boot-source": {
+    "kernel_image_path": "/root/firecracker/resources/x86_64/vmlinux-6.1.141"
+  },
+  "machine-config": {
+    "vcpu_count": 1,
+    "mem_size_mib": 2048
+  },
+  "network-interfaces": [
+    {
+      "iface_id": "eth0",
+      "host_dev_name": "tap2"
+    },
+    {
+      "iface_id": "mmds0", 
+      "host_dev_name": "tap3"
+    }
+  ]
+}
+```
+
+**IMPORTANT**: 
+- `drives` is an ARRAY, not object - iterate to find rootfs
+- `network-interfaces` is an ARRAY, not object - iterate by iface_id
+- Always check for both eth0 and mmds0 interfaces
 
 ### Communication
 - Uses Unix domain sockets for API communication
@@ -220,14 +351,26 @@ autostart=true
 
 ## Network Configuration Details
 
-### TAP Device Setup
-1. Check if device exists: `ip link show <device>`
-2. Create if needed: `sudo ip tuntap add <device> mode tap`
-3. Check current IP: `ip addr show <device>`
-4. Add IP if needed: `sudo ip addr add <ip>/32 dev <device>`
-5. Bring up: `sudo ip link set <device> up`
-6. Check route: `ip route show <vm_ip>/32`
-7. Add route if needed: `sudo ip route add <vm_ip>/32 dev <device>`
+### TAP Device Setup (ENHANCED)
+1. **Auto-discovery**: `ip link show | grep tap` to find existing devices
+2. **Auto-generation**: Find next available tapN device name
+3. **Validation**: Check if explicitly specified devices exist (fail if they do)
+4. **Creation**: Create if needed: `sudo ip tuntap add <device> mode tap`
+5. **IP Assignment**: Add IP if needed: `sudo ip addr add <ip>/32 dev <device>`
+6. **Activation**: Bring up: `sudo ip link set <device> up`
+7. **Routing**: Add route if needed: `sudo ip route add <vm_ip>/32 dev <device>`
+
+### TAP Device Session Tracking (NEW)
+- Maintains `allocated_tap_devices` set in FirecrackerVMManager
+- Tracks devices allocated during current session
+- Prevents conflicts when creating multiple VMs
+- Validates explicitly specified devices don't conflict
+
+### IP Address Resolution (NEW)
+- Queries system for TAP device IPs using `ip addr show <device>`
+- Parses output to extract IPv4 addresses
+- Used by list command to show host IP addresses
+- Gracefully handles missing devices or IPs
 
 ### Cleanup Process
 1. Remove TAP device: `sudo ip link del <device>`
@@ -240,16 +383,24 @@ autostart=true
 - Checks if socket is in use before operations
 - Removes stale socket files
 - Prevents conflicts with running instances
+- Handles configurable socket directories
 
-### Network Conflicts
+### Network Conflicts (ENHANCED)
 - Checks for existing IP assignments
 - Checks for existing routes
 - Graceful handling of pre-existing configurations
+- Validates explicitly specified TAP devices don't exist
+- Auto-generates alternative device names
 
 ### Process Management
 - Signal handling for graceful shutdown in foreground mode
 - Cleanup on abnormal termination
 - Resource leak prevention
+
+### API Error Handling (ENHANCED)
+- Graceful handling of offline VMs in list command
+- Proper error messages for API failures
+- Fallback to device names when IP resolution fails
 
 ## Dependencies
 
@@ -265,32 +416,44 @@ pip install requests requests-unixsocket
   - Network device management (`ip` commands)
   - Supervisor configuration (`/etc/supervisor/conf.d/`)
   - Supervisor control (`supervisorctl`)
+- `ip` command for network operations (gracefully handles absence)
 
 ### File Permissions
 - Read access to kernel and rootfs files
-- Write access to socket directory
+- Write access to socket directory (configurable)
 - Write access to `/etc/supervisor/conf.d/`
 - Write access to `/var/log/` for Firecracker logs
 
 ## Common Workflows
 
-### Creating a VM
-1. Parse command line arguments
-2. Validate required parameters
-3. Check socket availability
-4. Clean up stale socket files
-5. Either:
+### Creating VMs with Auto-Generation (NEW DEFAULT)
+1. Parse command line arguments and .env configuration
+2. Auto-generate TAP device names if not specified
+3. Validate explicitly specified devices don't exist
+4. Check socket availability in configured directory
+5. Clean up stale socket files
+6. Either:
    - **Supervisor mode**: Create config → reload supervisor → configure VM
    - **Foreground mode**: Setup network → start Firecracker → configure VM
-6. Setup TAP device and networking
-7. Configure Firecracker via API
-8. Start the VM
+7. Setup TAP devices and networking (both main and MMDS)
+8. Configure Firecracker via API (including MMDS)
+9. Start the VM
 
-### Destroying a VM
+### Listing VMs (NEW)
+1. Scan socket directory for .sock files
+2. For each socket file:
+   - Extract VM name from filename
+   - Test if Firecracker is listening
+   - Query /vm/config API for configuration
+   - Query /mmds API for metadata (internal IP)
+   - Query system for TAP device IPs
+3. Format and display comprehensive table
+
+### Destroying VMs (ENHANCED)
 1. Parse command line arguments
 2. Check socket is not in use (VM should be stopped)
-3. Remove socket file
-4. Remove TAP device (routes auto-removed)
+3. Remove socket file from configured directory
+4. Remove TAP devices if specified (routes auto-removed)
 5. Remove supervisor configuration
 6. Reload supervisor
 
@@ -303,11 +466,19 @@ pip install requests requests-unixsocket
 - Immediate feedback on configuration issues
 - Clear command visibility for manual testing
 
+### List Command for Monitoring (NEW)
+- Real-time VM status checking
+- Configuration verification
+- Network troubleshooting
+- Resource usage overview
+
 ### Common Issues
-- Socket permission errors → Check socket directory permissions
+- Socket permission errors → Check socket directory permissions and SOCKET_PATH_PREFIX
 - TAP device creation failures → Check sudo access and network permissions
+- TAP device conflicts → Use auto-generation instead of explicit names
 - Firecracker startup failures → Check binary path and kernel/rootfs files
 - Supervisor issues → Check supervisor daemon status and configuration directory
+- List command shows no VMs → Check socket directory and VM status
 
 ### Log Locations
 - **Supervisor mode**: `/var/log/<vm_name>.log` and `/var/log/<vm_name>.error.log`
@@ -317,12 +488,15 @@ pip install requests requests-unixsocket
 
 ### Potential Improvements
 1. **Configuration files**: Support for VM configuration files
-2. **Multiple network interfaces**: Support for additional network devices
+2. **Multiple network interfaces**: Support for additional network devices beyond eth0/mmds0
 3. **Storage devices**: Support for additional block devices
-4. **Resource monitoring**: VM resource usage monitoring
+4. **Resource monitoring**: VM resource usage monitoring via API
 5. **Template management**: VM template system
 6. **Batch operations**: Multiple VM management
 7. **Integration**: Cloud-init, metadata service integration
+8. **TAP device IP management**: Auto-assign IP addresses for TAP devices
+9. **VM state management**: Start/stop/pause operations for existing VMs
+10. **Performance metrics**: Integration with Firecracker metrics API
 
 ### API Extensions
 - Health checking endpoints
@@ -334,21 +508,24 @@ pip install requests requests-unixsocket
 
 ### Code Structure
 - Single class design for simplicity
-- Clear separation of concerns (network, supervisor, API)
+- Clear separation of concerns (network, supervisor, API, discovery)
 - Comprehensive error handling
 - Idempotent operations where possible
+- Session state management for TAP devices
 
 ### Testing Approach
 - Test with actual Firecracker binaries
-- Validate network configuration
+- Validate network configuration and auto-generation
 - Test cleanup scenarios
 - Verify supervisor integration
+- Test VM discovery and listing functionality
 
 ### Documentation Standards
 - Keep `firecracker_vm_manager.md` updated with all changes
 - Update help text for new parameters
 - Include example usage for new features
 - Document any new dependencies or requirements
+- Update CLAUDE.md with architectural changes
 
 ## Critical Setup Information for Future Development
 
@@ -356,6 +533,25 @@ pip install requests requests-unixsocket
 1. **Always reference the Swagger documentation**: https://github.com/firecracker-microvm/firecracker/blob/main/src/firecracker/swagger/firecracker.yaml
 2. **Check the getting started guide for examples**: https://github.com/firecracker-microvm/firecracker/blob/main/docs/getting-started.md
 3. **Use WebFetch tool to get latest API information** if documentation links change
+4. **Remember API response structure**: drives and network-interfaces are ARRAYS, not objects
+
+### Example API Response Parsing (CRITICAL)
+When working with /vm/config responses, remember:
+
+```python
+# CORRECT - drives is an array
+drives = config.get('drives', [])
+for drive in drives:
+    if drive.get('drive_id') == 'rootfs' and drive.get('is_root_device', False):
+        rootfs_path = drive.get('path_on_host', 'N/A')
+
+# CORRECT - network-interfaces is an array  
+network_interfaces = config.get('network-interfaces', [])
+for interface in network_interfaces:
+    iface_id = interface.get('iface_id')
+    if iface_id == 'eth0':
+        tap_device = interface.get('host_dev_name')
+```
 
 ### Example curl commands from Getting Started Guide
 These were the original curl commands the script abstracts:
@@ -413,6 +609,25 @@ stderr_logfile=/var/log/<vm_name>.error.log
 autostart=true
 ```
 
+### TAP Device Auto-Generation Logic (NEW CRITICAL FEATURE)
+The auto-generation system works as follows:
+
+1. **System Scan**: `ip link show` to find existing tap devices
+2. **Index Extraction**: Parse device names to extract indices (tap0 → 0, tap1 → 1)
+3. **Session Tracking**: Maintain set of allocated devices in current session
+4. **Conflict Prevention**: Check both system devices and session allocations
+5. **Sequential Assignment**: Find first available index starting from 0
+
+```python
+# Key data structures
+self.allocated_tap_devices = set()  # Session tracking
+
+# Auto-generation flow
+existing = discover_existing_tap_devices()  # System scan
+next_device = find_next_available_tap_device()  # Find available
+self.allocated_tap_devices.add(next_device)  # Track allocation
+```
+
 ### If Documentation Links Break
 If the GitHub links become unavailable, you can:
 1. Use the WebFetch tool to get current documentation
@@ -420,4 +635,29 @@ If the GitHub links become unavailable, you can:
 3. Look for the official Firecracker repository on GitHub
 4. Check the swagger/OpenAPI specification in the source code
 
-This context document should provide all necessary information for future development sessions, including the complete architecture, current implementation details, potential enhancement directions, and critical external documentation references.
+## Project Status Summary
+
+### Recently Implemented Features (Latest Session)
+1. **TAP Device Auto-Generation**: Complete system for automatic TAP device discovery and assignment
+2. **Socket Path Configuration**: SOCKET_PATH_PREFIX environment variable for configurable socket directories
+3. **VM Listing and Monitoring**: Comprehensive list command with API querying and table display
+4. **Enhanced Network Management**: TAP device IP resolution and display
+5. **Session-Based Conflict Prevention**: Tracks allocated devices within script execution
+6. **Validation System**: Checks for existing devices when explicitly specified
+7. **Always-On MMDS**: All VMs now get MMDS with network configuration
+
+### Current Capabilities
+- **Full VM Lifecycle**: Create, destroy, and list VMs
+- **Automatic Network Setup**: TAP device auto-generation and configuration
+- **Production Ready**: Supervisor integration with configurable paths
+- **Development Friendly**: Foreground mode for debugging
+- **Monitoring**: Real-time VM discovery and status display
+- **Robust**: Comprehensive error handling and validation
+
+### Architecture Status
+- **Stable**: Core architecture is mature and well-tested
+- **Extensible**: Clean separation allows for easy feature additions
+- **Documented**: Comprehensive documentation for users and developers
+- **Backward Compatible**: All existing functionality preserved
+
+This context document provides all necessary information for future development sessions, including the complete architecture, current implementation details, recent enhancements, potential future directions, and critical external documentation references.
