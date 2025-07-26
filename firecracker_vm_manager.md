@@ -57,7 +57,7 @@ Before using this script, ensure you have:
 
 ## Usage
 
-The script supports three main actions: **create**, **destroy**, and **list** VMs.
+The script supports four main actions: **create**, **destroy**, **list** VMs, and **kernels** (list available kernels).
 
 ### Create a VM (Simplest Form)
 
@@ -98,6 +98,12 @@ This will automatically generate TAP devices (tap0 for main interface, tap1 for 
   --memory 512
 ```
 
+### List Available Kernels
+
+```bash
+./fcm kernels
+```
+
 ### List Running VMs
 
 ```bash
@@ -128,7 +134,7 @@ This will automatically generate TAP devices (tap0 for main interface, tap1 for 
 
 | Parameter | Description | Example |
 |-----------|-------------|---------|
-| `--kernel` | Path to kernel image (can be set in .env as KERNEL_PATH) | `vmlinux` |
+| `--kernel` | Kernel filename (must exist in KERNEL_PATH directory) | `vmlinux-6.1.141` |
 | `--rootfs` | Path to rootfs device | `rootfs.ext4` |
 | `--cpus` | Number of vCPUs (can be set in .env as CPUS) | `2` |
 | `--memory` | Memory in MiB (can be set in .env as MEMORY) | `512` |
@@ -185,6 +191,29 @@ The `SOCKET_PATH_PREFIX` environment variable controls where VM socket files are
 - **Default**: `/tmp`
 - **Recommended**: `/var/run/firecracker` for production use
 - **Auto-creation**: Directory is created automatically if it doesn't exist
+
+### Kernel Path Configuration
+
+The `KERNEL_PATH` environment variable must point to a directory containing kernel files:
+
+```bash
+KERNEL_PATH=/path/to/kernels
+```
+
+#### Features
+- **Directory Only**: KERNEL_PATH must always be a directory path
+- **Filename Selection**: Use `--kernel <filename>` to select specific kernel from the directory
+- **Auto-Discovery**: Use `./fcm kernels` to see all available kernel files
+- **Pattern Matching**: Automatically finds files matching: vmlinux*, bzImage*, kernel*, Image*
+
+#### Usage Examples
+```bash
+# List available kernels in KERNEL_PATH directory
+./fcm kernels
+
+# Use specific kernel by filename
+./fcm create --name vm1 --kernel vmlinux-6.1.141 --rootfs disk.ext4 --tap-ip 192.168.1.1 --vm-ip 10.0.1.1
+```
 
 ## TAP Device Auto-Generation
 
@@ -367,37 +396,48 @@ vm2     | 10.4.17.2   | 2    | 512 MiB | ubuntu.ext4     | vmlinux         | tap
 1. **Set up .env file:**
    ```bash
    cat > .env << EOF
-   KERNEL_PATH=vmlinux
+   KERNEL_PATH=/path/to/kernels
    CPUS=2
    MEMORY=512
    SOCKET_PATH_PREFIX=/var/run/firecracker
    EOF
    ```
 
-2. **Create first VM (gets tap0/tap1):**
+2. **Check available kernels:**
+   ```bash
+   ./fcm kernels
+   # Output shows available kernel files:
+   # Available kernels in /path/to/kernels:
+   # vmlinux-6.1.141     15.2 MB  2024-01-15 10:30
+   # vmlinux-5.15.0      14.8 MB  2024-01-10 09:45
+   ```
+
+3. **Create first VM (gets tap0/tap1):**
    ```bash
    ./fcm create \
      --name vm1 \
+     --kernel vmlinux-6.1.141 \
      --rootfs alpine.ext4 \
      --tap-ip 192.168.1.1 \
      --vm-ip 10.0.1.1
    ```
 
-3. **Create second VM (gets tap2/tap3):**
+4. **Create second VM (gets tap2/tap3):**
    ```bash
    ./fcm create \
      --name vm2 \
+     --kernel vmlinux-5.15.0 \
      --rootfs ubuntu.ext4 \
      --tap-ip 192.168.1.2 \
      --vm-ip 10.0.1.2
    ```
 
-4. **List running VMs:**
+5. **List running VMs:**
    ```bash
    ./fcm list
    ```
 
-5. **Destroy VMs:**
+6. **Destroy VMs:**
    ```bash
    ./fcm destroy --name vm1
    ./fcm destroy --name vm2
@@ -409,7 +449,7 @@ vm2     | 10.4.17.2   | 2    | 512 MiB | ubuntu.ext4     | vmlinux         | tap
    ```bash
    ./fcm create \
      --name myvm \
-     --kernel vmlinux \
+     --kernel vmlinux-6.1.141 \
      --rootfs rootfs.ext4 \
      --tap-ip 172.16.0.1 \
      --vm-ip 172.16.0.2 \

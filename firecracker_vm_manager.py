@@ -364,6 +364,85 @@ class FirecrackerVMManager:
         for row in table_data:
             print_row(row)
 
+    def list_available_kernels(self, kernel_path_env):
+        """List available kernel files from KERNEL_PATH directory"""
+        if not kernel_path_env:
+            print("Error: KERNEL_PATH not set in .env file", file=sys.stderr)
+            return False
+        
+        kernel_dir = Path(kernel_path_env)
+        if not kernel_dir.is_dir():
+            print(f"Error: KERNEL_PATH '{kernel_path_env}' is not a valid directory", file=sys.stderr)
+            return False
+            
+        try:
+            # Look for common kernel file patterns
+            kernel_patterns = ['vmlinux*', 'bzImage*', 'kernel*', 'Image*']
+            kernel_files = []
+            
+            for pattern in kernel_patterns:
+                kernel_files.extend(kernel_dir.glob(pattern))
+            
+            # Remove duplicates and sort
+            kernel_files = sorted(set(kernel_files), key=lambda x: x.name)
+            
+            if not kernel_files:
+                print(f"No kernel files found in {kernel_dir}")
+                print("Looking for files matching: vmlinux*, bzImage*, kernel*, Image*")
+                return True
+            
+            print(f"Available kernels in {kernel_dir}:")
+            print()
+            
+            # Print table header
+            print(f"{'Filename':<30} {'Size':<10} {'Modified'}")
+            print('-' * 55)
+            
+            for kernel_file in kernel_files:
+                try:
+                    stat = kernel_file.stat()
+                    size_mb = stat.st_size / (1024 * 1024)
+                    modified = Path(kernel_file).stat().st_mtime
+                    from datetime import datetime
+                    modified_str = datetime.fromtimestamp(modified).strftime('%Y-%m-%d %H:%M')
+                    
+                    print(f"{kernel_file.name:<30} {size_mb:>6.1f} MB {modified_str}")
+                except Exception as e:
+                    print(f"{kernel_file.name:<30} {'N/A':<10} {'N/A'}")
+            
+            print()
+            print(f"Usage: ./fcm create --kernel <filename> ...")
+            print(f"Example: ./fcm create --kernel {kernel_files[0].name} ...")
+            
+            return True
+            
+        except Exception as e:
+            print(f"Error accessing kernel directory {kernel_dir}: {e}", file=sys.stderr)
+            return False
+
+    def resolve_kernel_path(self, kernel_filename, kernel_path_env):
+        """Resolve kernel filename to full path using KERNEL_PATH directory"""
+        if not kernel_filename:
+            return None
+        
+        if not kernel_path_env:
+            print("Error: KERNEL_PATH not set in .env file", file=sys.stderr)
+            return None
+        
+        kernel_dir = Path(kernel_path_env)
+        
+        if not kernel_dir.is_dir():
+            print(f"Error: KERNEL_PATH '{kernel_path_env}' is not a valid directory", file=sys.stderr)
+            return None
+        
+        kernel_file = kernel_dir / kernel_filename
+        if kernel_file.exists():
+            return str(kernel_file)
+        else:
+            print(f"Error: Kernel file '{kernel_filename}' not found in {kernel_dir}", file=sys.stderr)
+            print(f"Use './fcm kernels' to see available kernels")
+            return None
+
     def _get_mmds_data_for_vm(self, socket_path):
         """Get MMDS data for a specific VM"""
         try:
@@ -873,10 +952,10 @@ PREREQUISITES:
 
 def main():
     parser = argparse.ArgumentParser(description="Manage Firecracker VMs", add_help=False)
-    parser.add_argument("action", nargs="?", choices=["create", "destroy", "list"], help="Action to perform")
+    parser.add_argument("action", nargs="?", choices=["create", "destroy", "list", "kernels"], help="Action to perform")
     parser.add_argument("--name", help="Name of the VM")
     parser.add_argument("--socket", help="Path to Firecracker API socket (default: /tmp/<vm_name>.sock)")
-    parser.add_argument("--kernel", help="Path to kernel image (can be set in .env file as KERNEL_PATH)")
+    parser.add_argument("--kernel", help="Kernel filename (must exist in KERNEL_PATH directory)")
     parser.add_argument("--rootfs", help="Path to rootfs device")
     parser.add_argument("--cpus", type=int, help="Number of vCPUs (can be set in .env as CPUS)")
     parser.add_argument("--memory", type=int, help="Memory in MiB (can be set in .env as MEMORY)")
@@ -897,8 +976,8 @@ def main():
     # Load configuration from .env file
     env_config = load_env_config()
 
-    # Check for basic required parameters (except for list action)
-    if not args.name and args.action != "list":
+    # Check for basic required parameters (except for list and kernels actions)
+    if not args.name and args.action not in ["list", "kernels"]:
         print("Error: --name is required for create and destroy actions", file=sys.stderr)
         show_help_and_exit()
     
@@ -914,8 +993,8 @@ def main():
         except Exception as e:
             print(f"Warning: Could not create socket directory {socket_path_prefix}: {e}", file=sys.stderr)
     
-    # Set default socket path if not provided (not needed for list action)
-    if not args.socket and args.action != "list":
+    # Set default socket path if not provided (not needed for list or kernels actions)
+    if not args.socket and args.action not in ["list", "kernels"]:
         args.socket = str(Path(socket_path_prefix) / f"{args.name}.sock")
     
     # Set kernel path from .env if not provided via command line
@@ -936,11 +1015,18 @@ def main():
         except ValueError:
             print(f"Warning: Invalid MEMORY value in .env file: {env_config['MEMORY']}", file=sys.stderr)
     
-    # Create VM manager (use dummy socket path for list action)
+    # Create VM manager (use dummy socket path for list and kernels actions)
     socket_path = args.socket if args.socket else str(Path(socket_path_prefix) / "dummy.sock")
     vm_manager = FirecrackerVMManager(socket_path, socket_path_prefix)
 
-    if args.action == "create":
+    if args.action == "kernels":
+        # List available kernels
+        success = vm_manager.list_available_kernels(env_config.get('KERNEL_PATH'))
+        if not success:
+            sys.exit(1)
+        return
+
+    elif args.action == "create":
         # Check for create-specific required parameters (tap-device now optional)
         create_required = {
             "kernel": args.kernel,
@@ -968,6 +1054,11 @@ def main():
             
             print(error_msg, file=sys.stderr)
             show_help_and_exit()
+
+        # Resolve kernel path (support both filenames and full paths)
+        resolved_kernel_path = vm_manager.resolve_kernel_path(args.kernel, env_config.get('KERNEL_PATH'))
+        if not resolved_kernel_path:
+            sys.exit(1)  # Error message already printed by resolve_kernel_path
 
         # Auto-generate TAP device name if not specified
         if not args.tap_device:
@@ -1001,7 +1092,7 @@ def main():
 
         success = vm_manager.create_vm(
             vm_name=args.name,
-            kernel_path=args.kernel,
+            kernel_path=resolved_kernel_path,
             rootfs_path=args.rootfs,
             tap_device=args.tap_device,
             tap_ip=args.tap_ip,

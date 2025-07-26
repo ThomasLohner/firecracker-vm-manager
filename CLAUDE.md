@@ -256,14 +256,16 @@ The Firecracker VM Manager is a Python script with a bash wrapper (`fcm`) that a
 ### Actions
 - `create`: Create and start a new VM
 - `destroy`: Stop and destroy an existing VM
-- `list`: List all running VMs with configuration details (NEW)
+- `list`: List all running VMs with configuration details
+- `kernels`: List available kernel files from KERNEL_PATH directory (NEW)
 
 ### Primary Usage
 All commands are executed through the `fcm` wrapper script:
 ```bash
-./fcm create --name myvm --rootfs disk.ext4 ...
-./fcm list
-./fcm destroy --name myvm
+./fcm kernels                                    # List available kernels
+./fcm create --name myvm --kernel vmlinux-6.1.141 --rootfs disk.ext4 ...
+./fcm list                                       # List running VMs
+./fcm destroy --name myvm                        # Destroy VM
 ```
 
 ### Parameters
@@ -272,7 +274,7 @@ All commands are executed through the `fcm` wrapper script:
 - `--name`: VM identifier (not required for list action)
 
 #### Create Action Required
-- `--kernel`: Path to kernel image (vmlinux) - can be set in .env as KERNEL_PATH
+- `--kernel`: Kernel filename (must exist in KERNEL_PATH directory)
 - `--rootfs`: Path to root filesystem image
 - `--cpus`: Number of vCPUs - can be set in .env as CPUS
 - `--memory`: Memory in MiB - can be set in .env as MEMORY
@@ -293,6 +295,11 @@ All commands are executed through the `fcm` wrapper script:
 #### List Action
 - No additional parameters required
 - Uses socket directory from SOCKET_PATH_PREFIX
+
+#### Kernels Action (NEW)
+- No additional parameters required
+- Uses KERNEL_PATH from .env file to scan for available kernels
+- KERNEL_PATH must be a directory containing kernel files
 
 ## Firecracker API Integration
 
@@ -679,17 +686,20 @@ If the GitHub links become unavailable, you can:
 ## Project Status Summary
 
 ### Recently Implemented Features (Latest Session)
-1. **FCM Wrapper Script**: Bash wrapper that auto-manages Python virtual environment and dependencies
-2. **TAP Device Auto-Generation**: Complete system for automatic TAP device discovery and assignment
-3. **Socket Path Configuration**: SOCKET_PATH_PREFIX environment variable for configurable socket directories
-4. **VM Listing and Monitoring**: Comprehensive list command with API querying and table display
-5. **Enhanced Network Management**: TAP device IP resolution and display
-6. **Session-Based Conflict Prevention**: Tracks allocated devices within script execution
-7. **Validation System**: Checks for existing devices when explicitly specified
-8. **Always-On MMDS**: All VMs now get MMDS with network configuration
+1. **Kernels Action**: New command to list available kernel files from KERNEL_PATH directory
+2. **Simplified Kernel Resolution**: --kernel parameter takes filename, KERNEL_PATH is always a directory
+3. **FCM Wrapper Script**: Bash wrapper that auto-manages Python virtual environment and dependencies
+4. **TAP Device Auto-Generation**: Complete system for automatic TAP device discovery and assignment
+5. **Socket Path Configuration**: SOCKET_PATH_PREFIX environment variable for configurable socket directories
+6. **VM Listing and Monitoring**: Comprehensive list command with API querying and table display
+7. **Enhanced Network Management**: TAP device IP resolution and display
+8. **Session-Based Conflict Prevention**: Tracks allocated devices within script execution
+9. **Validation System**: Checks for existing devices when explicitly specified
+10. **Always-On MMDS**: All VMs now get MMDS with network configuration
 
 ### Current Capabilities
 - **Zero-Setup Execution**: `fcm` wrapper handles all environment and dependency management
+- **Kernel Management**: List available kernels and use filenames instead of full paths
 - **Full VM Lifecycle**: Create, destroy, and list VMs
 - **Automatic Network Setup**: TAP device auto-generation and configuration
 - **Production Ready**: Supervisor integration with configurable paths
