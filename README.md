@@ -22,8 +22,8 @@ A comprehensive Python script for managing Firecracker microVMs with automatic `
   - [6. Start the VM](#6-start-the-vm)
   - [7. Connect via SSH](#7-connect-via-ssh)
 - [Next Steps: Use firecracker_vm_manager.py](#-next-steps-use-firecracker_vm_managerpy)
-- [Advanced Topics](#-advanced-topics)
-- [Illustrations](#-illustrations)
+- [Advanced Topics](#️-advanced-topics)
+- [Illustrations](#️-illustrations)
 
 ## 🔥 What is Firecracker?
 Firecracker is an open-source virtualization technology built for running serverless workloads in **microVMs**—lightweight, fast-booting VMs with excellent isolation. It's used by AWS Lambda and other modern systems to blend the performance of containers with the isolation of VMs.
@@ -187,10 +187,12 @@ Congrats! You’ve booted your first VM manually! 🎉
 Now head over to [firecracker_vm_manager.md](firecracker_vm_manager.md) to automate everything with FCM.
 
 ## 🛠️ Advanced Topics
+
 * [Build Custom Kernel](Build_custom_kernel.md)
 * [Build Custom rootFS (Images)](Build_custom_rootfs.md)
 
 ## 🖼️ Illustrations
+
 ### Firecracker VM Lifecycle
 ```
              +----------------------------+
