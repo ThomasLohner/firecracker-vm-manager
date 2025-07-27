@@ -64,6 +64,65 @@ Before using this script, ensure you have:
 
 The script supports eight main actions: **create**, **destroy**, **stop**, **start**, **restart**, **list** VMs, **kernels** (list available kernels), and **images** (list available image files).
 
+### Prerequisites: Prepare Kernels and Images
+
+**IMPORTANT:** Before creating your first VM, you need to have at least one kernel file and one base image file available.
+
+#### Setup Required Files
+
+1. **Place kernel files** in the directory specified by `KERNEL_PATH` in your `.env` file
+2. **Place base image files** in the directory specified by `IMAGES_PATH` in your `.env` file
+
+#### How to Get Kernels and Images
+
+For detailed instructions on downloading kernels and creating base images, see the main [README.md](README.md) which covers:
+
+- **Section 3**: [Download Kernel Image](README.md#3-download-kernel-image) - How to get prebuilt kernel files
+- **Section 4**: [Create Root Filesystem](README.md#4-create-root-filesystem) - How to create base image files from Ubuntu/other distributions
+- **Advanced Topics**: Links to building custom kernels and rootfs from scratch
+
+#### Quick Example Setup
+
+```bash
+# Create directories
+mkdir -p kernels images rootfs
+
+# Download a prebuilt kernel (example)
+cd kernels
+wget https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.12/x86_64/vmlinux-6.1.128
+
+# Download and create a base image (example)
+cd ../images
+wget https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.12/x86_64/ubuntu-24.04.squashfs
+unsquashfs ubuntu-24.04.squashfs
+truncate -s 1G ubuntu-base.ext4
+mkfs.ext4 -d squashfs-root -F ubuntu-base.ext4
+rm -rf squashfs-root ubuntu-24.04.squashfs
+
+# Update your .env file
+cat > .env << EOF
+KERNEL_PATH=./kernels
+IMAGES_PATH=./images
+ROOTFS_PATH=./rootfs
+IMAGE=ubuntu-base.ext4
+ROOTFS_SIZE=1G
+CPUS=1
+MEMORY=512
+EOF
+```
+
+#### Verify Setup
+
+```bash
+# Check available kernels
+./fcm kernels
+
+# Check available images  
+./fcm images
+```
+
+You should see your kernel and image files listed before proceeding to create VMs.
+
 ### Create a VM (Simplest Form)
 
 ```bash
