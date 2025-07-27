@@ -238,6 +238,46 @@ class FirecrackerVMManager:
         except Exception:
             return None
 
+    def discover_all_vms(self):
+        """Discover all VMs (both running and stopped) by scanning cache and socket directories"""
+        all_vms = []
+        
+        # First, get all cached VMs
+        if self.cache_dir.exists():
+            for cache_file in self.cache_dir.glob("*.json"):
+                vm_name = cache_file.stem  # filename without .json extension
+                
+                # Check if VM is running by looking for socket and testing connection
+                socket_path = str(Path(self.socket_path_prefix) / f"{vm_name}.sock")
+                is_running = False
+                vm_config = None
+                
+                if Path(socket_path).exists():
+                    # Create a temporary VM manager for this socket
+                    temp_manager = FirecrackerVMManager(socket_path, self.socket_path_prefix)
+                    if temp_manager.check_socket_in_use():
+                        vm_config = temp_manager.get_vm_config()
+                        if vm_config:
+                            is_running = True
+                
+                # Load cached configuration
+                try:
+                    with open(cache_file, 'r') as f:
+                        cached_config = json.load(f)
+                except Exception:
+                    # Skip VMs with corrupted cache files
+                    continue
+                
+                all_vms.append({
+                    'name': vm_name,
+                    'socket_path': socket_path,
+                    'config': vm_config,
+                    'cached_config': cached_config,
+                    'state': 'running' if is_running else 'stopped'
+                })
+        
+        return all_vms
+
     def discover_running_vms(self):
         """Discover running VMs by scanning socket files in socket directory"""
         socket_dir = Path(self.socket_path_prefix)
@@ -266,60 +306,84 @@ class FirecrackerVMManager:
         
         return running_vms
 
-    def format_vm_table(self, running_vms):
-        """Format running VM information as a table"""
-        if not running_vms:
-            print("No running VMs found.")
+    def format_vm_table(self, all_vms):
+        """Format VM information as a table (both running and stopped)"""
+        if not all_vms:
+            print("No VMs found.")
             return
         
         # Extract information for table
         table_data = []
-        for vm in running_vms:
-            config = vm['config']
-            
-            # Extract basic info
+        for vm in all_vms:
             vm_name = vm['name']
+            state = vm['state']
+            config = vm['config']  # May be None for stopped VMs
+            cached_config = vm.get('cached_config', {})
             
-            # Extract machine config
-            machine_config = config.get('machine-config', {})
-            cpus = machine_config.get('vcpu_count', 'N/A')
-            memory = machine_config.get('mem_size_mib', 'N/A')
-            
-            # Extract boot source info
-            boot_source = config.get('boot-source', {})
-            kernel_path = boot_source.get('kernel_image_path', 'N/A')
-            kernel_name = Path(kernel_path).name if kernel_path != 'N/A' else 'N/A'
-            
-            # Extract drives info (rootfs) - drives is an array
-            drives = config.get('drives', [])
-            rootfs_filename = 'N/A'
-            for drive in drives:
-                if drive.get('drive_id') == 'rootfs' and drive.get('is_root_device', False):
-                    rootfs_path = drive.get('path_on_host', 'N/A')
-                    rootfs_filename = Path(rootfs_path).name if rootfs_path != 'N/A' else 'N/A'
-                    break
-            
-            # Extract network interfaces - network-interfaces is an array
-            network_interfaces = config.get('network-interfaces', [])
-            tap_info = 'N/A'
-            mmds_tap_info = 'N/A'
-            internal_ip = 'N/A'
-            
-            # Look for interfaces by iface_id and get their IP addresses
-            tap_device = 'N/A'
-            mmds_tap_device = 'N/A'
-            
-            for interface in network_interfaces:
-                iface_id = interface.get('iface_id')
-                host_dev_name = interface.get('host_dev_name', 'N/A')
+            # For running VMs, prefer API config; for stopped VMs, use cached config
+            if state == 'running' and config:
+                # Extract from API configuration
+                machine_config = config.get('machine-config', {})
+                cpus = machine_config.get('vcpu_count', 'N/A')
+                memory = machine_config.get('mem_size_mib', 'N/A')
                 
-                if iface_id == 'eth0':
-                    tap_device = host_dev_name
-                elif iface_id == 'mmds0':
-                    mmds_tap_device = host_dev_name
+                boot_source = config.get('boot-source', {})
+                kernel_path = boot_source.get('kernel_image_path', 'N/A')
+                kernel_name = Path(kernel_path).name if kernel_path != 'N/A' else 'N/A'
+                
+                # Extract drives info (rootfs) - drives is an array
+                drives = config.get('drives', [])
+                rootfs_filename = 'N/A'
+                for drive in drives:
+                    if drive.get('drive_id') == 'rootfs' and drive.get('is_root_device', False):
+                        rootfs_path = drive.get('path_on_host', 'N/A')
+                        rootfs_filename = Path(rootfs_path).name if rootfs_path != 'N/A' else 'N/A'
+                        break
+                
+                # Extract network interfaces - network-interfaces is an array
+                network_interfaces = config.get('network-interfaces', [])
+                tap_device = 'N/A'
+                mmds_tap_device = 'N/A'
+                
+                for interface in network_interfaces:
+                    iface_id = interface.get('iface_id')
+                    host_dev_name = interface.get('host_dev_name', 'N/A')
+                    
+                    if iface_id == 'eth0':
+                        tap_device = host_dev_name
+                    elif iface_id == 'mmds0':
+                        mmds_tap_device = host_dev_name
+                
+                # Get IP address for main TAP device
+                tap_ip = self.get_tap_device_ip(tap_device)
+                
+                # Try to get MMDS data for internal IP
+                mmds_data = self._get_mmds_data_for_vm(vm['socket_path'])
+                if mmds_data and 'network_config' in mmds_data:
+                    internal_ip = mmds_data['network_config'].get('ip', 'N/A')
+                else:
+                    internal_ip = 'N/A'
+                    
+            else:
+                # Extract from cached configuration for stopped VMs
+                cpus = cached_config.get('cpus', 'N/A')
+                memory = cached_config.get('memory', 'N/A')
+                
+                kernel_path = cached_config.get('kernel', 'N/A')
+                kernel_name = Path(kernel_path).name if kernel_path != 'N/A' else 'N/A'
+                
+                rootfs_path = cached_config.get('rootfs', 'N/A')
+                rootfs_filename = Path(rootfs_path).name if rootfs_path != 'N/A' else 'N/A'
+                
+                tap_device = cached_config.get('tap_device', 'N/A')
+                mmds_tap_device = cached_config.get('mmds_tap', 'N/A')
+                
+                # For stopped VMs, we can't get real-time IP info
+                tap_ip = 'N/A'
+                internal_ip = cached_config.get('vm_ip', 'N/A')
             
-            # Get IP address for main TAP device only (MMDS is always 169.254.169.254)
-            tap_ip = self.get_tap_device_ip(tap_device)
+            # Get base image from cached configuration (available for both running and stopped)
+            base_image = cached_config.get('base_image', 'N/A')
             
             # Format TAP interface info with IP
             tap_info = f"{tap_device}"
@@ -329,24 +393,21 @@ class FirecrackerVMManager:
             # MMDS TAP doesn't need IP since it's always 169.254.169.254
             mmds_tap_info = mmds_tap_device
             
-            # Try to get MMDS data for internal IP
-            mmds_data = self._get_mmds_data_for_vm(vm['socket_path'])
-            if mmds_data and 'network_config' in mmds_data:
-                internal_ip = mmds_data['network_config'].get('ip', 'N/A')
-            
             table_data.append([
                 vm_name,
+                state,
                 internal_ip,
                 str(cpus),
                 f"{memory} MiB" if memory != 'N/A' else 'N/A',
                 rootfs_filename,
+                base_image,
                 kernel_name,
                 tap_info,
                 mmds_tap_info
             ])
         
         # Print table header
-        headers = ['VM Name', 'Internal IP', 'CPUs', 'Memory', 'Rootfs', 'Kernel', 'TAP Interface (IP)', 'MMDS TAP']
+        headers = ['VM Name', 'State', 'Internal IP', 'CPUs', 'Memory', 'Rootfs', 'Base Image', 'Kernel', 'TAP Interface (IP)', 'MMDS TAP']
         
         # Calculate column widths
         col_widths = [len(header) for header in headers]
@@ -605,7 +666,7 @@ class FirecrackerVMManager:
         """Get the cache file path for a VM"""
         return self.cache_dir / f"{vm_name}.json"
 
-    def save_vm_config(self, vm_name, kernel_path, rootfs_path, tap_device, mmds_tap, vm_ip, tap_ip, cpus, memory, hostname):
+    def save_vm_config(self, vm_name, kernel_path, rootfs_path, tap_device, mmds_tap, vm_ip, tap_ip, cpus, memory, hostname, base_image=None):
         """Save VM configuration to cache file"""
         if not self._ensure_cache_directory():
             return False
@@ -620,6 +681,7 @@ class FirecrackerVMManager:
             "cpus": cpus,
             "memory": memory,
             "hostname": hostname,
+            "base_image": base_image,
             "created_at": time.time()
         }
         
@@ -878,7 +940,7 @@ autostart=true
         }
         return self._make_request("PUT", "/actions", data)
 
-    def create_vm(self, vm_name, kernel_path, rootfs_path, tap_device, tap_ip, vm_ip, cpus, memory, metadata=None, mmds_tap=None, foreground=False, hostname=None):
+    def create_vm(self, vm_name, kernel_path, rootfs_path, tap_device, tap_ip, vm_ip, cpus, memory, metadata=None, mmds_tap=None, foreground=False, hostname=None, base_image=None):
         """Create and start a new VM"""
         print(f"Creating VM: {vm_name}...")
         
@@ -901,7 +963,7 @@ autostart=true
         
         # Save VM configuration to cache if creation was successful
         if success:
-            if not self.save_vm_config(vm_name, kernel_path, rootfs_path, tap_device, mmds_tap, vm_ip, tap_ip, cpus, memory, hostname or vm_name):
+            if not self.save_vm_config(vm_name, kernel_path, rootfs_path, tap_device, mmds_tap, vm_ip, tap_ip, cpus, memory, hostname or vm_name, base_image):
                 print("Warning: Failed to save VM configuration to cache", file=sys.stderr)
         
         return success
@@ -1361,7 +1423,7 @@ ACTIONS:
     stop            Stop a VM without removing TAP devices
     start           Start a previously created VM from cached configuration
     restart         Restart a VM by stopping and then starting it
-    list            List all running VMs with their configuration
+    list            List all VMs (both running and stopped) with their configuration and state
     kernels         List available kernel files from KERNEL_PATH directory
     images          List available image files from IMAGES_PATH directory
 
@@ -1432,7 +1494,7 @@ EXAMPLE USAGE:
     # Restart a VM (stop then start)
     ./firecracker_vm_manager.py restart --name myvm
 
-    # List all running VMs
+    # List all VMs
     ./firecracker_vm_manager.py list
 
 PREREQUISITES:
@@ -1636,7 +1698,8 @@ def main():
             metadata=metadata,
             mmds_tap=args.mmds_tap,
             foreground=args.foreground,
-            hostname=hostname
+            hostname=hostname,
+            base_image=args.image
         )
 
     elif args.action == "destroy":
@@ -1659,9 +1722,9 @@ def main():
         success = vm_manager.restart_vm(vm_name=args.name)
 
     elif args.action == "list":
-        # List running VMs
-        running_vms = vm_manager.discover_running_vms()
-        vm_manager.format_vm_table(running_vms)
+        # List all VMs (both running and stopped)
+        all_vms = vm_manager.discover_all_vms()
+        vm_manager.format_vm_table(all_vms)
         return  # No need to check success for list action
 
     if not success:

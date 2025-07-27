@@ -1,6 +1,6 @@
-# Firecracker VM Manager - Development Context
+# Firecracker VM Manager (fcm) - Development Context
 
-This document provides complete context for the Firecracker VM Manager project for future development sessions.
+This document provides complete context for the Firecracker VM Manager (also called fcm) project for future development sessions.
 
 ## Essential Documentation Links
 
@@ -129,7 +129,7 @@ The Firecracker VM Manager is a Python script with a bash wrapper (`fcm`) that a
 
 #### VM Configuration Caching (NEW)
 - `_ensure_cache_directory()`: Creates cache directory if it doesn't exist
-- `save_vm_config()`: Saves VM configuration to cache file after successful creation
+- `save_vm_config()`: Saves VM configuration to cache file after successful creation (includes base_image)
 - `load_vm_config()`: Loads VM configuration from cache file for restart
 - `remove_vm_config_cache()`: Removes cached configuration file
 
@@ -147,9 +147,10 @@ The Firecracker VM Manager is a Python script with a bash wrapper (`fcm`) that a
 - `list_available_images()`: Lists available image files from IMAGES_PATH directory
 
 #### VM Discovery and Monitoring (NEW)
-- `discover_running_vms()`: Scans socket directory for running VMs
+- `discover_all_vms()`: Scans cache directory and socket files to find all VMs (running and stopped)
+- `discover_running_vms()`: Scans socket directory for running VMs (legacy method)
 - `get_vm_config()`: Gets VM configuration via /vm/config API
-- `format_vm_table()`: Formats VM information as a table
+- `format_vm_table()`: Formats VM information as a table with state column
 - `_get_mmds_data_for_vm()`: Gets MMDS data for internal IP extraction
 
 #### Network Management
@@ -206,7 +207,7 @@ The Firecracker VM Manager is a Python script with a bash wrapper (`fcm`) that a
 #### Automatic Configuration Persistence
 - **Cache Directory**: Auto-creates `cache/` directory for VM configurations
 - **JSON Storage**: Saves complete VM config as `cache/<vm_name>.json` after successful creation
-- **Configuration Data**: Stores kernel, rootfs, TAP devices, IPs, CPU/memory, hostname, creation timestamp
+- **Configuration Data**: Stores kernel, rootfs, TAP devices, IPs, CPU/memory, hostname, base_image, creation timestamp
 - **Stop/Start Workflow**: Enables stopping VMs without losing configuration for later restart
 
 #### Stop/Start Actions (NEW)
@@ -324,20 +325,41 @@ The Firecracker VM Manager is a Python script with a bash wrapper (`fcm`) that a
 ### VM Discovery and Monitoring (NEW MAJOR FEATURE)
 
 #### List Command Features
-- **Socket Scanning**: Discovers VMs by finding .sock files in socket directory
-- **API Querying**: Connects to each VM's Firecracker API for configuration
-- **Real-time Data**: Shows current VM state and configuration
-- **Rich Information**: Comprehensive table with all VM details
+- **Comprehensive Discovery**: Discovers all VMs (both running and stopped) by scanning cache and socket directories
+- **State Detection**: Automatically determines if each VM is running or stopped
+- **API Querying**: Connects to running VM's Firecracker API for real-time configuration
+- **Cache Fallback**: Uses cached configuration for stopped VMs
+- **Rich Information**: Comprehensive table with all VM details including state
 
 #### Information Displayed
-- **VM Name**: Extracted from socket filename
-- **Internal IP**: VM's guest IP from MMDS network_config
-- **CPUs**: Number of virtual CPUs from machine-config
-- **Memory**: RAM allocation from machine-config
+- **VM Name**: Extracted from cache filename or socket filename
+- **State**: "running" or "stopped" based on socket availability and API response
+- **Internal IP**: VM's guest IP from MMDS network_config (running) or cache (stopped)
+- **CPUs**: Number of virtual CPUs from machine-config or cache
+- **Memory**: RAM allocation from machine-config or cache
 - **Rootfs**: Root filesystem filename (path stripped)
+- **Base Image**: Original image file used to create the VM (from cache)
 - **Kernel**: Kernel image filename (path stripped)
-- **TAP Interface (IP)**: Main interface device and host IP address
+- **TAP Interface (IP)**: Main interface device and host IP address (real-time for running VMs)
 - **MMDS TAP**: MMDS interface device name
+
+#### Enhanced Table Format
+The list command now displays VMs in the following table format:
+```
+VM Name | State | Internal IP | CPUs | Memory | Rootfs | Base Image | Kernel | TAP Interface (IP) | MMDS TAP
+```
+
+**Example Output:**
+```
+VM Name   | State   | Internal IP | CPUs | Memory   | Rootfs         | Base Image  | Kernel          | TAP Interface (IP) | MMDS TAP
+----------+---------+-------------+------+----------+----------------+-------------+-----------------+--------------------+---------
+web-vm    | running | 10.0.1.1    | 2    | 1024 MiB | web-vm.ext4    | alpine.ext4 | vmlinux-6.1.141 | tap0 (192.168.1.1) | tap1    
+db-vm     | stopped | 10.0.1.2    | 1    | 512 MiB  | db-vm.ext4     | ubuntu.ext4 | vmlinux-6.1.141 | tap2               | tap3    
+```
+
+**State-Specific Data Sources:**
+- **Running VMs**: Real-time data from Firecracker API + base image from cache
+- **Stopped VMs**: All data from cached configuration files
 
 ## Command Line Interface
 
@@ -347,7 +369,7 @@ The Firecracker VM Manager is a Python script with a bash wrapper (`fcm`) that a
 - `stop`: Stop a VM without removing TAP devices (NEW)
 - `start`: Start a previously created VM from cached configuration (NEW)
 - `restart`: Restart a VM by stopping and then starting it (NEW)
-- `list`: List all running VMs with configuration details
+- `list`: List all VMs (both running and stopped) with configuration details and state
 - `kernels`: List available kernel files from KERNEL_PATH directory
 - `images`: List available image files from IMAGES_PATH directory (NEW)
 
@@ -817,6 +839,10 @@ If the GitHub links become unavailable, you can:
 16. **Socket Path Configuration**: SOCKET_PATH_PREFIX environment variable for configurable socket directories
 17. **VM Listing and Monitoring**: Comprehensive list command with API querying and table display
 18. **Always-On MMDS**: All VMs now get MMDS with network configuration and hostname
+19. **Base Image Tracking**: VM cache now stores and displays the original image file used to create each VM
+20. **VM State Monitoring**: List command now shows both running and stopped VMs with their current state
+21. **Enhanced List Display**: Added "State" and "Base Image" columns to VM listing table
+22. **Comprehensive VM Discovery**: New discover_all_vms() method finds all VMs regardless of state
 
 ### Current Capabilities
 - **Zero-Setup Execution**: `fcm` wrapper handles all environment and dependency management
@@ -929,6 +955,84 @@ def destroy_vm(self, vm_name, force_destroy=False):
 - Confirmation prompt added (can be bypassed with --force-destroy)
 
 This refactoring makes the destroy action much safer and more reliable, preventing accidental data loss while ensuring complete resource cleanup.
+
+### Latest Enhancement Details (Base Image Tracking and VM State Monitoring)
+
+#### Base Image Tracking Enhancement
+The VM configuration cache and list display have been enhanced to track and display the original base image used to create each VM:
+
+**Key Changes:**
+1. **Enhanced save_vm_config()**: Added `base_image` parameter to store original image filename
+2. **Updated create_vm()**: Modified to pass base image name to save_vm_config
+3. **Enhanced Cache Structure**: Cache files now include `"base_image"` field
+4. **Updated Table Display**: List command now shows "Base Image" column
+
+**Cache Structure Enhancement:**
+```json
+{
+  "kernel": "/path/to/kernel",
+  "rootfs": "/path/to/vm.ext4",
+  "base_image": "alpine.ext4",
+  "tap_device": "tap0",
+  "mmds_tap": "tap1",
+  "vm_ip": "10.0.1.1",
+  "tap_ip": "192.168.1.1",
+  "cpus": 2,
+  "memory": 1024,
+  "hostname": "vm-name",
+  "created_at": 1234567890
+}
+```
+
+#### VM State Monitoring Enhancement
+The list command has been completely overhauled to show both running and stopped VMs with their current state:
+
+**New Methods:**
+1. **discover_all_vms()**: Comprehensive VM discovery method that finds all VMs regardless of state
+2. **Enhanced format_vm_table()**: Handles both running and stopped VMs with different data sources
+
+**Key Features:**
+1. **State Detection**: Automatically determines if VMs are running or stopped
+2. **Mixed Data Sources**: Uses API for running VMs, cache for stopped VMs
+3. **Enhanced Table**: Added "State" column showing "running" or "stopped"
+4. **Comprehensive Discovery**: Scans cache directory to find all created VMs
+
+**New VM Discovery Logic:**
+1. Scan cache directory for all VM configuration files
+2. For each VM, check if socket file exists and Firecracker is responding
+3. Classify as "running" if API responds, "stopped" otherwise
+4. Extract configuration from API (running) or cache (stopped)
+
+**Updated Table Format:**
+```
+VM Name | State | Internal IP | CPUs | Memory | Rootfs | Base Image | Kernel | TAP Interface (IP) | MMDS TAP
+```
+
+**Backward Compatibility:**
+- VMs created before base image tracking show "N/A" for base image
+- Legacy discover_running_vms() method maintained for compatibility
+- All existing functionality preserved
+
+**Command Line Impact:**
+- `./fcm list` now shows comprehensive view of all VMs
+- Help text updated to reflect "both running and stopped VMs"
+- No breaking changes to existing commands
+
+#### Implementation Details
+**Files Modified:**
+- `save_vm_config()`: Added base_image parameter and cache field
+- `create_vm()`: Added base_image parameter and pass-through
+- `discover_all_vms()`: New comprehensive discovery method
+- `format_vm_table()`: Complete refactor for state-aware display
+- Main function: Updated list action to use discover_all_vms()
+- Help text: Updated descriptions for enhanced functionality
+
+**Error Handling:**
+- Graceful handling of missing or corrupted cache files
+- Fallback to "N/A" for missing base image information
+- Robust state detection with proper error handling
+
+This enhancement provides a complete view of VM lifecycle management, making it easier to track VM origins and current states in the Firecracker infrastructure.
 
 ---
 
