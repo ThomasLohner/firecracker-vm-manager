@@ -147,6 +147,7 @@ This will automatically generate TAP devices (tap0 for main interface, tap1 for 
 |-----------|-------------|---------|
 | `--tap-device` | TAP device name on host (auto-generated if not specified) | `tap0` |
 | `--mmds-tap` | MMDS TAP device name (auto-generated if not specified) | `tap1` |
+| `--hostname` | Hostname for the VM (defaults to VM name if not specified) | `web-server` |
 
 ### Optional for DESTROY Action
 
@@ -258,7 +259,8 @@ All VMs automatically receive a `network_config` object containing:
 {
   "network_config": {
     "ip": "172.16.0.2",     // VM IP address
-    "gateway": "172.16.0.1"  // TAP device IP (gateway)
+    "gateway": "172.16.0.1",  // TAP device IP (gateway)
+    "hostname": "myvm"       // VM hostname (defaults to VM name)
   }
 }
 ```
@@ -274,10 +276,11 @@ All VMs automatically receive a `network_config` object containing:
   --vm-ip 172.16.0.2
 ```
 
-**With custom metadata:**
+**With custom metadata and hostname:**
 ```bash
 ./fcm create \
   --name myvm \
+  --hostname web-server \
   --rootfs rootfs.ext4 \
   --tap-ip 172.16.0.1 \
   --vm-ip 172.16.0.2 \
@@ -416,6 +419,7 @@ vm2     | 10.4.17.2   | 2    | 512 MiB | ubuntu.ext4     | vmlinux         | tap
    ```bash
    ./fcm create \
      --name vm1 \
+     --hostname alpine-vm \
      --kernel vmlinux-6.1.141 \
      --rootfs alpine.ext4 \
      --tap-ip 192.168.1.1 \
@@ -426,6 +430,7 @@ vm2     | 10.4.17.2   | 2    | 512 MiB | ubuntu.ext4     | vmlinux         | tap
    ```bash
    ./fcm create \
      --name vm2 \
+     --hostname ubuntu-server \
      --kernel vmlinux-5.15.0 \
      --rootfs ubuntu.ext4 \
      --tap-ip 192.168.1.2 \

@@ -225,13 +225,14 @@ The Firecracker VM Manager is a Python script with a bash wrapper (`fcm`) that a
 ### Metadata Service (MMDS) Support (ENHANCED)
 - **Always Enabled**: All VMs now get MMDS with network_config
 - JSON metadata parsing from command line or file
-- Automatic network configuration injection (always includes network_config object)
+- Automatic network configuration injection (always includes network_config object with hostname)
 - Dual network interface setup with separate TAP devices
   - eth0 (via main TAP) for application traffic
   - mmds0 (via MMDS TAP) for metadata access
 - Dedicated MMDS interface configuration via `/mmds/config` endpoint
 - MMDS IP address explicitly configured as 169.254.169.254
 - Support for custom application metadata
+- **Hostname Configuration**: Configurable via --hostname parameter, defaults to VM name
 
 ### VM Discovery and Monitoring (NEW MAJOR FEATURE)
 
@@ -286,6 +287,7 @@ All commands are executed through the `fcm` wrapper script:
 - `--mmds-tap`: TAP device name for MMDS interface (AUTO-GENERATED if not specified)
 - `--socket`: Path to Firecracker API socket (default: `<SOCKET_PATH_PREFIX>/<vm_name>.sock`)
 - `--metadata`: JSON metadata for MMDS (provide JSON string or file path starting with @)
+- `--hostname`: Hostname for the VM (defaults to VM name if not specified)
 - `--foreground`: Run in foreground for debugging
 
 #### Destroy Action Optional (ENHANCED)
@@ -695,7 +697,8 @@ If the GitHub links become unavailable, you can:
 7. **Enhanced Network Management**: TAP device IP resolution and display
 8. **Session-Based Conflict Prevention**: Tracks allocated devices within script execution
 9. **Validation System**: Checks for existing devices when explicitly specified
-10. **Always-On MMDS**: All VMs now get MMDS with network configuration
+10. **Always-On MMDS**: All VMs now get MMDS with network configuration and hostname
+11. **Hostname Parameter**: New --hostname parameter automatically injected into MMDS network_config
 
 ### Current Capabilities
 - **Zero-Setup Execution**: `fcm` wrapper handles all environment and dependency management
@@ -712,5 +715,45 @@ If the GitHub links become unavailable, you can:
 - **Extensible**: Clean separation allows for easy feature additions
 - **Documented**: Comprehensive documentation for users and developers
 - **Backward Compatible**: All existing functionality preserved
+
+### Latest Enhancement Details (Hostname Support)
+
+#### parse_metadata Function Enhancement
+The `parse_metadata()` function has been updated to include hostname support:
+
+**Function Signature:**
+```python
+def parse_metadata(metadata_arg, tap_ip, vm_ip, hostname=None):
+```
+
+**Key Changes:**
+1. Added optional `hostname` parameter to function signature
+2. Hostname is automatically injected into the `network_config` object
+3. If hostname is None, it defaults to the VM name in the main function
+4. The network_config structure now includes three fields: `ip`, `gateway`, and `hostname`
+
+**Example Network Config Output:**
+```json
+{
+  "network_config": {
+    "ip": "10.0.1.1",
+    "gateway": "192.168.1.1", 
+    "hostname": "web-server"
+  }
+}
+```
+
+**Usage Examples:**
+```bash
+# Uses VM name as hostname
+./fcm create --name web-vm --rootfs disk.ext4 --tap-ip 192.168.1.1 --vm-ip 10.0.1.1
+
+# Custom hostname
+./fcm create --name vm1 --hostname production-nginx --rootfs disk.ext4 --tap-ip 192.168.1.1 --vm-ip 10.0.1.1
+```
+
+This enhancement ensures all VMs have proper hostname configuration available through the MMDS interface, improving VM identification and configuration management.
+
+---
 
 This context document provides all necessary information for future development sessions, including the complete architecture, current implementation details, recent enhancements, potential future directions, and critical external documentation references.

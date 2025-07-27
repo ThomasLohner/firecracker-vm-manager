@@ -29,7 +29,7 @@ def load_env_config():
     return config
 
 
-def parse_metadata(metadata_arg, tap_ip, vm_ip):
+def parse_metadata(metadata_arg, tap_ip, vm_ip, hostname=None):
     """Parse metadata from command line argument and add network config"""
     metadata = {}
     
@@ -60,7 +60,8 @@ def parse_metadata(metadata_arg, tap_ip, vm_ip):
     # Always add network_config object
     metadata['network_config'] = {
             'ip': vm_ip,
-            'gateway': tap_ip
+            'gateway': tap_ip,
+            'hostname': hostname
         }
     
     return metadata
@@ -908,6 +909,7 @@ OPTIONAL FOR DESTROY ACTION:
 OPTIONAL PARAMETERS (CREATE ONLY):
     --cpus          Number of vCPUs (default: 1)
     --memory        Memory in MiB (default: 128)
+    --hostname      Hostname for the VM (defaults to VM name if not specified)
     --foreground    Run Firecracker in foreground for debugging (skips supervisor)
     --help, -h      Show this help message
 
@@ -959,6 +961,7 @@ def main():
     parser.add_argument("--vm-ip", help="IP address for VM (guest)")
     parser.add_argument("--metadata", help="JSON metadata for MMDS (provide JSON string or file path starting with @)")
     parser.add_argument("--mmds-tap", help="TAP device name for MMDS interface (enables MMDS with network config)")
+    parser.add_argument("--hostname", help="Hostname for the VM (defaults to VM name if not specified)")
     parser.add_argument("--foreground", action="store_true", help="Run Firecracker in foreground for debugging")
     parser.add_argument("--help", "-h", action="store_true", help="Show help message")
 
@@ -1079,9 +1082,12 @@ def main():
             # Mark explicitly provided device as allocated to prevent conflicts
             vm_manager.allocated_tap_devices.add(args.mmds_tap)
 
+        # Set hostname to VM name if not specified
+        hostname = args.hostname if args.hostname else args.name
+        
         # Parse metadata (always include network_config since we always have MMDS TAP)
         # When MMDS TAP is available, always create metadata (at minimum with network_config)
-        metadata = parse_metadata(args.metadata, args.tap_ip, args.vm_ip)
+        metadata = parse_metadata(args.metadata, args.tap_ip, args.vm_ip, hostname)
         if metadata is None:
             sys.exit(1)  # Error message already printed by parse_metadata
 
