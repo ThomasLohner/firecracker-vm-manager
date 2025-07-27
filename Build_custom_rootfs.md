@@ -65,3 +65,90 @@ TODO:
 ``` 
 error while staring vm
 * Starting networking ...ifquery: could not parse /etc/network/interfaces
+
+NEW:
+```
+#syntax=docker/dockerfile:1.4
+
+FROM alpine:latest
+
+# Network and ssh setup
+COPY <<-'EOF' /usr/local/bin/fcnet_start.sh
+	#!/bin/sh
+
+	# Set up mmds interface so we can get metadata
+	ip link set dev eth1 name mmds
+	ip link set mmds up
+	ip route add 169.254.169.254 dev mmds
+
+	# Add a small delay to ensure the interface is ready
+	sleep 0.2
+
+	# Fetch network config with error checking
+	IP=$(curl -s --max-time 10 http://169.254.169.254/network_config/ip)
+	GATEWAY=$(curl -s --max-time 10 http://169.254.169.254/network_config/gateway)
+
+	# Debug: log the values (you can check these in system logs)
+	echo "Retrieved IP: '$IP'" >&2
+	echo "Retrieved Gateway: '$GATEWAY'" >&2
+
+	# Check if values were retrieved successfully
+	if [ -z "$IP" ] || [ -z "$GATEWAY" ]; then
+	echo "Failed to retrieve network configuration" >&2
+	exit 1
+	fi
+
+	# Apply network configuration
+	ip addr add "$IP" dev eth0
+	ip link set eth0 up
+	ip route add "$GATEWAY" dev eth0
+	ip route add default via "$GATEWAY" dev eth0
+EOF
+COPY <<-'EOF' /etc/init.d/fcnet
+	#!/usr/sbin/openrc-run
+
+	description="Firecracker net service"
+	command="/usr/local/bin/fcnet_start.sh"
+	pidfile="/run/$RC_SVCNAME.pid"
+
+	depend() {
+	    provide net
+	}
+
+	start() {
+	    ebegin "Starting fcnet"
+	    $command
+	    eend $?
+	}
+
+	stop() {
+	    ebegin "Stopping fcnet"
+	    eend 0
+	}
+EOF
+
+RUN <<-EOF
+	# unlock root for ssh login
+	passwd -u root
+	chmod 0755 /usr/local/bin/*.sh /etc/init.d/fcnet
+	apk add --no-cache openrc util-linux nano curl docker openssh
+	# Set up a login terminal on the serial console (ttyS0):
+	ln -s agetty /etc/init.d/agetty.ttyS0
+	echo ttyS0 > /etc/securetty
+
+	# Add everything to boot runlevel
+	rc-update add fcnet boot
+	rc-update add agetty.ttyS0 default
+	rc-update add devfs boot
+	rc-update add procfs boot
+	rc-update add sysfs boot
+	rc-update add sshd boot
+	rc-update add docker boot
+        mkdir /root/.ssh/authorized_keys
+	echo "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIG3P/pMsjM3CsgwKhZRxRskaKC1s8g3Ypt6LR3fuSl0o root@firecracker-srv1.scalecommerce.dev" > /root/.ssh
+EOF
+```
+docker build --no-cache --output type=tar,dest=rootfs.tar .
+mkdir rootfs && tar -C rootfs -xf rootfs.tar
+truncate -s 1G alpine-v1.0.ext4
+

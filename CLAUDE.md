@@ -85,6 +85,7 @@
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `KERNEL_PATH` | Kernel files directory | Required |
+| `KERNEL` | Default kernel filename | Optional |
 | `IMAGES_PATH` | Base image files | `./images` |
 | `ROOTFS_PATH` | VM-specific rootfs files | `./rootfs` |
 | `SOCKET_PATH_PREFIX` | Socket file directory | `/tmp` |
@@ -137,7 +138,7 @@ network_interfaces = config.get('network-interfaces', [])  # ARRAY - iterate by 
 
 ### Required Parameters (Create)
 - `--name`: VM identifier
-- `--kernel`: Kernel filename (in KERNEL_PATH)
+- `--kernel`: Kernel filename (in KERNEL_PATH, or set KERNEL in .env)
 - `--image`: Image filename (in IMAGES_PATH, or set IMAGE in .env)
 - `--rootfs-size`: Rootfs size (or set ROOTFS_SIZE in .env)
 - `--cpus`: vCPUs (or set CPUS in .env)

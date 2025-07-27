@@ -1434,7 +1434,7 @@ OPTIONAL PARAMETERS:
     --socket        Path to Firecracker API socket file (default: /tmp/<vm_name>.sock)
 
 REQUIRED FOR CREATE ACTION:
-    --kernel        Kernel filename (must exist in KERNEL_PATH directory)
+    --kernel        Kernel filename (must exist in KERNEL_PATH directory, can be set in .env as KERNEL)
     --image         Image filename (must exist in IMAGES_PATH directory)
     --rootfs-size   Size to resize rootfs to (e.g., 1G, 512M, 2048M)
     --tap-ip        IP address for TAP device on host
@@ -1512,7 +1512,7 @@ def main():
     parser.add_argument("action", nargs="?", choices=["create", "destroy", "stop", "start", "restart", "list", "kernels", "images"], help="Action to perform")
     parser.add_argument("--name", help="Name of the VM")
     parser.add_argument("--socket", help="Path to Firecracker API socket (default: /tmp/<vm_name>.sock)")
-    parser.add_argument("--kernel", help="Kernel filename (must exist in KERNEL_PATH directory)")
+    parser.add_argument("--kernel", help="Kernel filename (must exist in KERNEL_PATH directory, can be set in .env as KERNEL)")
     parser.add_argument("--image", help="Image filename (must exist in IMAGES_PATH directory, can be set in .env as IMAGE)")
     parser.add_argument("--rootfs-size", help="Size to resize rootfs to (can be set in .env as ROOTFS_SIZE)")
     parser.add_argument("--cpus", type=int, help="Number of vCPUs (can be set in .env as CPUS)")
@@ -1558,9 +1558,9 @@ def main():
     if not args.socket and args.action not in ["list", "kernels", "images"]:
         args.socket = str(Path(socket_path_prefix) / f"{args.name}.sock")
     
-    # Set kernel path from .env if not provided via command line
-    if not args.kernel and 'KERNEL_PATH' in env_config:
-        args.kernel = env_config['KERNEL_PATH']
+    # Set kernel from .env if not provided via command line
+    if not args.kernel and 'KERNEL' in env_config and env_config['KERNEL']:
+        args.kernel = env_config['KERNEL']
     
     # Set image from .env if not provided via command line
     if not args.image and 'IMAGE' in env_config and env_config['IMAGE']:
