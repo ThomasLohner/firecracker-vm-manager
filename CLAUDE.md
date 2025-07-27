@@ -14,7 +14,7 @@ This document provides complete context for the Firecracker VM Manager project f
 - **Official Website**: https://firecracker-microvm.github.io
 
 ### Creating and Updating Documentation
-When making changes to the code also update the documentation. Do not touch README.md instead the correct Doc is firecracker_vm_manager.md
+When making changes to the code also update the documentation. Do not touch README.md instead the correct Doc is firecracker_vm_manager.md After meaningful changes update CLAUDE.md so future you has all information to keep working on this project.
 
 ### Key API Information Extracted
 From the documentation review, these are the critical API details:
@@ -874,6 +874,61 @@ def parse_metadata(metadata_arg, tap_ip, vm_ip, hostname=None):
 ```
 
 This enhancement ensures all VMs have proper hostname configuration available through the MMDS interface, improving VM identification and configuration management.
+
+### Latest Enhancement Details (Destroy Action Refactoring)
+
+#### Major Destroy Action Overhaul
+The `destroy_vm()` method has been completely refactored to be safer and more thorough:
+
+**New Function Signature:**
+```python
+def destroy_vm(self, vm_name, force_destroy=False):
+```
+
+**Key Changes:**
+1. **VM Running Check**: Now checks if VM is running and exits with error if so
+2. **Cache-Based Cleanup**: Loads VM config from cache to get TAP devices and rootfs path
+3. **User Confirmation**: Prompts for confirmation unless `--force-destroy` flag is used
+4. **Comprehensive Cleanup**: Deletes rootfs file, TAP devices, supervisor config, and cache
+5. **New Parameter**: Added `--force-destroy` command line argument
+
+**New Destroy Workflow:**
+1. Check if VM is running (error if running)
+2. Load VM configuration from cache
+3. Show confirmation prompt (unless --force-destroy)
+4. Remove socket file
+5. Remove TAP devices (from cache)
+6. Delete rootfs file (from cache path)
+7. Remove supervisor config
+8. Remove configuration cache
+
+**Command Line Changes:**
+```bash
+# Old destroy (required TAP device specification)
+./fcm destroy --name vm1 --tap-device tap0 --mmds-tap tap1
+
+# New destroy (uses cache, confirmation prompt)
+./fcm destroy --name vm1
+# Shows warning and asks for confirmation
+
+# New force destroy (skips confirmation)
+./fcm destroy --name vm1 --force-destroy
+```
+
+**Safety Improvements:**
+- Prevents accidental data loss with confirmation prompts
+- Requires VM to be stopped before destruction
+- Uses cached configuration for reliable cleanup
+- Permanently deletes rootfs files (no orphaned files)
+- More thorough resource cleanup
+
+**Breaking Changes:**
+- Destroy action signature changed (old tap_device/mmds_tap params removed)
+- Now requires cached configuration (VMs created before caching won't work)
+- More restrictive (requires VM to be stopped first)
+- Confirmation prompt added (can be bypassed with --force-destroy)
+
+This refactoring makes the destroy action much safer and more reliable, preventing accidental data loss while ensuring complete resource cleanup.
 
 ---
 

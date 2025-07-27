@@ -1064,35 +1064,85 @@ autostart=true
         
         return True
     
-    def destroy_vm(self, vm_name, tap_device, mmds_tap=None):
-        """Destroy a VM and clean up resources"""
+    def destroy_vm(self, vm_name, force_destroy=False):
+        """Destroy a VM and clean up all resources including rootfs"""
         print(f"Destroying VM: {vm_name}...")
         
-        # Check if socket is in use
+        # 1. Check if VM is running and throw error if so
         if self.check_socket_in_use():
-            print(f"Error: Socket {self.socket_path} is still in use. Stop the VM first.", file=sys.stderr)
+            print(f"Error: VM '{vm_name}' is currently running. Please stop the VM first using:", file=sys.stderr)
+            print(f"  ./fcm stop --name {vm_name}", file=sys.stderr)
             return False
         
-        # Remove socket file if it exists
+        # 2. Load VM config from cache to get TAP devices and rootfs path
+        cache_data = self.load_vm_config(vm_name)
+        if not cache_data:
+            print(f"Error: Cannot destroy VM '{vm_name}' - no cached configuration found", file=sys.stderr)
+            print("This VM may have been created with an older version or the cache was deleted", file=sys.stderr)
+            return False
+        
+        # Extract configuration from cache
+        tap_device = cache_data.get('tap_device')
+        mmds_tap = cache_data.get('mmds_tap')
+        rootfs_path = cache_data.get('rootfs')
+        
+        # 3. Ask for confirmation unless force_destroy is specified
+        if not force_destroy:
+            print(f"\n⚠️  WARNING: This will permanently delete:")
+            if rootfs_path:
+                print(f"   - VM rootfs file: {rootfs_path}")
+            if tap_device:
+                print(f"   - TAP device: {tap_device}")
+            if mmds_tap:
+                print(f"   - MMDS TAP device: {mmds_tap}")
+            print(f"   - Supervisor configuration for '{vm_name}'")
+            print(f"   - VM configuration cache")
+            
+            while True:
+                response = input(f"\nAre you sure you want to destroy VM '{vm_name}'? (yes/no): ").strip().lower()
+                if response in ['yes', 'y']:
+                    break
+                elif response in ['no', 'n']:
+                    print("VM destruction cancelled.")
+                    return False
+                else:
+                    print("Please enter 'yes' or 'no'")
+        
+        # 4. Remove socket file if it exists
         socket_file = Path(self.socket_path)
         if socket_file.exists():
-            print(f"Removing socket file: {self.socket_path}")
             socket_file.unlink()
-            print(f"✓ Socket file removed")
+            print(f"✓ Socket file removed: {self.socket_path}")
         
-        # Remove TAP device (routes are automatically removed)
+        # 5. Remove TAP devices using cached config
         if tap_device:
             if not self.remove_tap_device(tap_device):
-                return False
+                print(f"Warning: Failed to remove TAP device {tap_device}", file=sys.stderr)
         else:
-            print("✓ No TAP device specified - skipping TAP device cleanup")
+            print("✓ No main TAP device found in cache")
         
-        # Remove MMDS TAP device if it was used
         if mmds_tap:
             if not self.remove_tap_device(mmds_tap):
-                return False
+                print(f"Warning: Failed to remove MMDS TAP device {mmds_tap}", file=sys.stderr)
+        else:
+            print("✓ No MMDS TAP device found in cache")
         
-        # Remove supervisor config
+        # 6. Delete rootfs file using cached config
+        if rootfs_path:
+            rootfs_file = Path(rootfs_path)
+            if rootfs_file.exists():
+                try:
+                    rootfs_file.unlink()
+                    print(f"✓ Rootfs file deleted: {rootfs_path}")
+                except Exception as e:
+                    print(f"Error: Failed to delete rootfs file {rootfs_path}: {e}", file=sys.stderr)
+                    return False
+            else:
+                print(f"✓ Rootfs file doesn't exist: {rootfs_path}")
+        else:
+            print("✓ No rootfs path found in cache")
+        
+        # 7. Delete supervisor config
         if not self.remove_supervisor_config(vm_name):
             return False
         
@@ -1100,7 +1150,11 @@ autostart=true
         if not self.supervisor_reload():
             return False
         
-        print(f"✓ VM {vm_name} destroyed successfully!")
+        # 8. Remove VM configuration cache
+        if not self.remove_vm_config_cache(vm_name):
+            print(f"Warning: Failed to remove configuration cache for VM {vm_name}", file=sys.stderr)
+        
+        print(f"✓ VM '{vm_name}' destroyed successfully!")
         return True
 
     def stop_vm(self, vm_name):
@@ -1409,6 +1463,7 @@ def main():
     parser.add_argument("--hostname", help="Hostname for the VM (defaults to VM name if not specified)")
     parser.add_argument("--foreground", action="store_true", help="Run Firecracker in foreground for debugging")
     parser.add_argument("--force-rootfs", action="store_true", help="Force overwrite existing rootfs file if it exists")
+    parser.add_argument("--force-destroy", action="store_true", help="Force destroy without confirmation prompt")
     parser.add_argument("--help", "-h", action="store_true", help="Show help message")
 
     args = parser.parse_args()
@@ -1585,17 +1640,10 @@ def main():
         )
 
     elif args.action == "destroy":
-        # For destroy action, TAP devices are now optional - we'll discover them if not specified
-        # This allows for easier cleanup when devices were auto-generated
-        
-        if not args.tap_device:
-            print("Warning: No --tap-device specified. You may need to manually clean up TAP devices.", file=sys.stderr)
-            args.tap_device = None  # Will be handled in destroy_vm method
-        
+        # Destroy action will load TAP devices and rootfs path from cache
         success = vm_manager.destroy_vm(
             vm_name=args.name,
-            tap_device=args.tap_device,
-            mmds_tap=args.mmds_tap
+            force_destroy=args.force_destroy
         )
 
     elif args.action == "stop":

@@ -211,7 +211,21 @@ This combines stop and start operations: stops the VM process, removes the socke
 ./fcm destroy --name myvm
 ```
 
-This completely removes the VM, TAP devices, configuration cache, and all resources.
+This completely removes the VM and all resources including:
+- VM rootfs file (permanently deleted)
+- TAP devices (both main and MMDS)
+- Supervisor configuration
+- VM configuration cache
+
+**⚠️ WARNING**: The destroy action is destructive and will permanently delete the VM's rootfs file. You will be prompted for confirmation unless you use `--force-destroy`.
+
+#### Force Destroy (No Confirmation)
+
+```bash
+./fcm destroy --name myvm --force-destroy
+```
+
+This skips the confirmation prompt and immediately destroys the VM.
 
 ### Get Help
 
@@ -252,8 +266,7 @@ This completely removes the VM, TAP devices, configuration cache, and all resour
 
 | Parameter | Description | Example |
 |-----------|-------------|---------|
-| `--tap-device` | TAP device name to remove (required if not using auto-discovery) | `tap0` |
-| `--mmds-tap` | MMDS TAP device name to remove (required if VM was created with metadata) | `tap1` |
+| `--force-destroy` | Skip confirmation prompt and destroy immediately | flag |
 
 ### Optional Parameters
 
@@ -263,6 +276,7 @@ This completely removes the VM, TAP devices, configuration cache, and all resour
 | `--metadata` | none | JSON metadata for MMDS (provide JSON string or file path starting with @) |
 | `--foreground` | false | Run Firecracker in foreground for debugging (skips supervisor) |
 | `--force-rootfs` | false | Force overwrite existing rootfs file if it exists |
+| `--force-destroy` | false | Skip confirmation prompt when destroying VMs |
 
 ## Configuration File
 
@@ -717,8 +731,18 @@ vm2     | 10.4.17.2   | 2    | 512 MiB | ubuntu.ext4     | vmlinux         | tap
 
 7. **Destroy VMs (complete cleanup):**
    ```bash
+   # Destroy with confirmation prompt
    ./fcm destroy --name vm1
-   ./fcm destroy --name vm2
+   # Output: ⚠️  WARNING: This will permanently delete:
+   #            - VM rootfs file: ./rootfs/vm1.ext4
+   #            - TAP device: tap0
+   #            - MMDS TAP device: tap1
+   #            - Supervisor configuration for 'vm1'
+   #            - VM configuration cache
+   #         Are you sure you want to destroy VM 'vm1'? (yes/no): yes
+   
+   # Or destroy without confirmation
+   ./fcm destroy --name vm2 --force-destroy
    ```
 
 ### Stop/Start Workflow Example
@@ -826,15 +850,19 @@ The script performs these operations in sequence:
 
 ### DESTROY Action
 
-The script performs these cleanup operations:
+The script performs these comprehensive cleanup operations:
 
-1. **Check socket status** - Ensures VM is not running
-2. **Remove socket file** - Cleans up API socket
-3. **Remove TAP devices** - Deletes both main and MMDS TAP interfaces (routes automatically removed)
-4. **Remove supervisor config** - Deletes supervisord configuration file
-5. **Reload supervisor** - Updates supervisor to stop managing the VM process
+1. **Check VM status** - Ensures VM is not running, exits with error if it is
+2. **Load VM configuration** - Reads cached config to get TAP devices and rootfs path
+3. **User confirmation** - Prompts for confirmation unless `--force-destroy` is used
+4. **Remove socket file** - Cleans up API socket
+5. **Remove TAP devices** - Deletes both main and MMDS TAP interfaces using cached config
+6. **Delete rootfs file** - Permanently removes the VM's rootfs file
+7. **Remove supervisor config** - Deletes supervisord configuration file
+8. **Reload supervisor** - Updates supervisor to stop managing the VM process
+9. **Remove configuration cache** - Deletes the cached VM configuration
 
-**Note:** The destroy action currently does not remove the configuration cache automatically. You may need to manually remove `cache/<vm_name>.json` if desired.
+**⚠️ IMPORTANT**: The destroy action now requires that the VM be stopped first and will permanently delete the VM's rootfs file. This is a destructive operation that cannot be undone.
 
 ### STOP Action
 
