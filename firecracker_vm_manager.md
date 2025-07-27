@@ -1,6 +1,6 @@
 # Firecracker VM Manager
 
-A Python script to create, destroy, and list Firecracker microVMs with automatic supervisord integration, network configuration, and TAP device auto-generation.
+A Python script to create, destroy, and list Firecracker microVMs with automatic image-based rootfs building, supervisord integration, network configuration, and TAP device auto-generation.
 
 ## Setup
 
@@ -15,7 +15,7 @@ A Python script to create, destroy, and list Firecracker microVMs with automatic
 
 **First run** (fresh setup):
 ```bash
-./fcm create --name myvm --rootfs disk.ext4 --tap-ip 172.16.0.1 --vm-ip 172.16.0.2
+./fcm create --name myvm --image alpine.ext4 --rootfs-size 1G --tap-ip 172.16.0.1 --vm-ip 172.16.0.2
 # Output: Creating Python virtual environment...
 #         Installing missing Python modules: requests requests-unixsocket
 #         [VM creation proceeds...]
@@ -36,6 +36,10 @@ Create a `.env` file in the same directory as the script to set default configur
 ```bash
 # .env file example
 KERNEL_PATH=vmlinux
+IMAGES_PATH=./images
+ROOTFS_PATH=./rootfs
+IMAGE=alpine.ext4
+ROOTFS_SIZE=1G
 CPUS=1
 MEMORY=128
 SOCKET_PATH_PREFIX=/var/run/firecracker
@@ -51,21 +55,23 @@ Before using this script, ensure you have:
 2. **Supervisor daemon** running on the system
 3. **Root/sudo access** for network configuration and supervisor management
 4. **Kernel image** (vmlinux file)
-5. **Root filesystem** image (ext4 file)
+5. **Base image files** (ext4, ext3, ext2, img, qcow2, or raw files)
+6. **resize2fs utility** for rootfs resizing
 
 **Note:** The script automatically manages Firecracker processes via supervisord, creates/removes TAP devices, and handles all network configuration with auto-generation capabilities.
 
 ## Usage
 
-The script supports seven main actions: **create**, **destroy**, **stop**, **start**, **restart**, **list** VMs, and **kernels** (list available kernels).
+The script supports eight main actions: **create**, **destroy**, **stop**, **start**, **restart**, **list** VMs, **kernels** (list available kernels), and **images** (list available image files).
 
 ### Create a VM (Simplest Form)
 
 ```bash
 ./fcm create \
   --name myvm \
-  --kernel vmlinux \
-  --rootfs rootfs.ext4 \
+  --kernel vmlinux-6.1.141 \
+  --image alpine.ext4 \
+  --rootfs-size 1G \
   --tap-ip 172.16.0.1 \
   --vm-ip 172.16.0.2
 ```
@@ -77,8 +83,9 @@ This will automatically generate TAP devices (tap0 for main interface, tap1 for 
 ```bash
 ./fcm create \
   --name myvm \
-  --kernel vmlinux \
-  --rootfs rootfs.ext4 \
+  --kernel vmlinux-6.1.141 \
+  --image alpine.ext4 \
+  --rootfs-size 1G \
   --tap-device tap5 \
   --mmds-tap tap6 \
   --tap-ip 172.16.0.1 \
@@ -90,18 +97,23 @@ This will automatically generate TAP devices (tap0 for main interface, tap1 for 
 ```bash
 ./fcm create \
   --name myvm \
-  --kernel vmlinux \
-  --rootfs rootfs.ext4 \
+  --kernel vmlinux-6.1.141 \
+  --image ubuntu.ext4 \
+  --rootfs-size 2G \
   --tap-ip 172.16.0.1 \
   --vm-ip 172.16.0.2 \
   --cpus 2 \
   --memory 512
 ```
 
-### List Available Kernels
+### List Available Resources
 
 ```bash
+# List available kernel files
 ./fcm kernels
+
+# List available image files  
+./fcm images
 ```
 
 ### List Running VMs
@@ -161,7 +173,8 @@ This completely removes the VM, TAP devices, configuration cache, and all resour
 | Parameter | Description | Example |
 |-----------|-------------|---------|
 | `--kernel` | Kernel filename (must exist in KERNEL_PATH directory) | `vmlinux-6.1.141` |
-| `--rootfs` | Path to rootfs device | `rootfs.ext4` |
+| `--image` | Image filename (must exist in IMAGES_PATH directory, can be set in .env as IMAGE) | `alpine.ext4` |
+| `--rootfs-size` | Size to resize rootfs to (can be set in .env as ROOTFS_SIZE) | `1G`, `512M`, `2048M` |
 | `--cpus` | Number of vCPUs (can be set in .env as CPUS) | `2` |
 | `--memory` | Memory in MiB (can be set in .env as MEMORY) | `512` |
 | `--tap-ip` | IP address for TAP device on host | `172.16.0.1` |
@@ -174,6 +187,7 @@ This completely removes the VM, TAP devices, configuration cache, and all resour
 | `--tap-device` | TAP device name on host (auto-generated if not specified) | `tap0` |
 | `--mmds-tap` | MMDS TAP device name (auto-generated if not specified) | `tap1` |
 | `--hostname` | Hostname for the VM (defaults to VM name if not specified) | `web-server` |
+| `--force-rootfs` | Force overwrite existing rootfs file if it exists | flag |
 
 ### Optional for DESTROY Action
 
@@ -189,6 +203,7 @@ This completely removes the VM, TAP devices, configuration cache, and all resour
 | `--socket` | `<SOCKET_PATH_PREFIX>/<vm_name>.sock` | Path to Firecracker API socket |
 | `--metadata` | none | JSON metadata for MMDS (provide JSON string or file path starting with @) |
 | `--foreground` | false | Run Firecracker in foreground for debugging (skips supervisor) |
+| `--force-rootfs` | false | Force overwrite existing rootfs file if it exists |
 
 ## Configuration File
 
@@ -198,9 +213,15 @@ The script supports a `.env` configuration file for setting default values that 
 
 ```bash
 # Required for VM creation
-KERNEL_PATH=vmlinux
+KERNEL_PATH=/path/to/kernels  # Directory containing kernel files
+IMAGES_PATH=./images          # Directory containing base image files  
+ROOTFS_PATH=./rootfs         # Directory where built rootfs files are stored
 CPUS=1
 MEMORY=128
+
+# Optional defaults
+IMAGE=alpine.ext4            # Default image file to use
+ROOTFS_SIZE=1G              # Default rootfs size
 
 # Socket directory configuration
 SOCKET_PATH_PREFIX=/var/run/firecracker
@@ -239,8 +260,115 @@ KERNEL_PATH=/path/to/kernels
 ./fcm kernels
 
 # Use specific kernel by filename
-./fcm create --name vm1 --kernel vmlinux-6.1.141 --rootfs disk.ext4 --tap-ip 192.168.1.1 --vm-ip 10.0.1.1
+./fcm create --name vm1 --kernel vmlinux-6.1.141 --image alpine.ext4 --rootfs-size 1G --tap-ip 192.168.1.1 --vm-ip 10.0.1.1
 ```
+
+## Image-Based Rootfs Building
+
+The script automatically builds VM-specific rootfs files from base images, enabling efficient VM creation with customizable filesystem sizes.
+
+### Image and Rootfs Path Configuration
+
+The script uses two key directories for image management:
+
+#### IMAGES_PATH Directory
+- **Purpose**: Contains base image files that serve as templates  
+- **Default**: `./images` (relative to script location)
+- **Supported formats**: ext4, ext3, ext2, img, qcow2, raw
+- **Usage**: Source images remain unchanged and can be reused
+
+#### ROOTFS_PATH Directory  
+- **Purpose**: Stores VM-specific rootfs files built from images
+- **Default**: `./rootfs` (relative to script location)
+- **Auto-creation**: Directory created automatically if it doesn't exist
+- **Naming**: Files named `<vm_name>.ext4` for each VM
+
+### Rootfs Building Process
+
+When creating a VM with `--image` and `--rootfs-size`, the script:
+
+1. **Validates image exists** in IMAGES_PATH directory
+2. **Checks for existing rootfs** - prevents accidental overwrites
+3. **Copies image** to ROOTFS_PATH as `<vm_name>.ext4`
+4. **Resizes filesystem** using `resize2fs` to specified size
+5. **Uses built rootfs** for VM creation
+
+### Force Overwrite Protection
+
+By default, the script prevents overwriting existing rootfs files:
+
+```bash
+# This will fail if vm1.ext4 already exists in ROOTFS_PATH
+./fcm create --name vm1 --image alpine.ext4 --rootfs-size 1G --tap-ip 192.168.1.1 --vm-ip 10.0.1.1
+
+# Error: Rootfs file already exists: ./rootfs/vm1.ext4
+# A VM with name 'vm1' may already have a rootfs file.
+# Please choose a different VM name, remove the existing file, or use --force-rootfs to overwrite.
+```
+
+Use `--force-rootfs` to intentionally overwrite:
+
+```bash
+# Force overwrite existing rootfs file
+./fcm create --name vm1 --image alpine.ext4 --rootfs-size 1G --tap-ip 192.168.1.1 --vm-ip 10.0.1.1 --force-rootfs
+
+# Warning: Overwriting existing rootfs file: ./rootfs/vm1.ext4
+# ✓ Force overwrite enabled
+```
+
+### Image Management Features
+
+#### List Available Images
+```bash
+./fcm images
+```
+
+Output example:
+```
+Available images in ./images:
+
+Filename                       Size       Modified
+-------------------------------------------------------
+alpine-base.ext4              45.2 MB    2024-01-15 10:30
+ubuntu-server.ext4           128.5 MB    2024-01-14 09:15
+debian-minimal.ext4           67.8 MB    2024-01-13 14:22
+
+Usage: ./fcm create --image <filename> ...
+Example: ./fcm create --image alpine-base.ext4 ...
+```
+
+#### Configuration Examples
+
+**Using environment defaults:**
+```bash
+# Set in .env file
+IMAGE=alpine-base.ext4
+ROOTFS_SIZE=2G
+
+# Create VM using defaults
+./fcm create --name myvm --kernel vmlinux-6.1.141 --tap-ip 192.168.1.1 --vm-ip 10.0.1.1
+```
+
+**Override with command line:**
+```bash
+# Override defaults with specific values
+./fcm create --name myvm --kernel vmlinux-6.1.141 --image ubuntu-server.ext4 --rootfs-size 4G --tap-ip 192.168.1.1 --vm-ip 10.0.1.1
+```
+
+### Rootfs Size Specifications
+
+The `--rootfs-size` parameter accepts standard size formats:
+- **Megabytes**: `512M`, `1024M`
+- **Gigabytes**: `1G`, `2G`, `4G`
+- **Bytes**: `1073741824` (not recommended)
+
+### Benefits of Image-Based System
+
+- **Template Reuse**: One base image creates multiple VMs with different sizes
+- **Storage Efficiency**: Only store base images once, build VM-specific rootfs as needed
+- **Size Flexibility**: Each VM can have different filesystem sizes from same base
+- **Safety**: Prevents accidental overwrites with explicit force option
+- **Clean Separation**: Source images and VM rootfs files stored separately
 
 ## VM Configuration Caching
 
@@ -249,7 +377,7 @@ The script automatically caches VM configurations to enable stop/start functiona
 ### Cache Features
 
 - **Automatic caching**: VM configuration is saved to `cache/<vm_name>.json` after successful creation
-- **Complete configuration**: Stores kernel, rootfs, TAP devices, IPs, CPU/memory settings, and hostname
+- **Complete configuration**: Stores kernel, built rootfs path, TAP devices, IPs, CPU/memory settings, and hostname
 - **Persistent across restarts**: Configuration survives system reboots and script restarts
 - **Stop/Start workflow**: Enables stopping VMs without losing configuration for later restart
 
@@ -261,7 +389,7 @@ The script automatically caches VM configurations to enable stop/start functiona
 
 ### Stop/Start Workflow
 
-1. **Create VM**: `./fcm create --name myvm ...` → VM config automatically cached
+1. **Create VM**: `./fcm create --name myvm --image alpine.ext4 --rootfs-size 1G ...` → VM config automatically cached
 2. **Stop VM**: `./fcm stop --name myvm` → Stops process, keeps TAP devices and cache
 3. **Start VM**: `./fcm start --name myvm` → Reads cache, recreates VM with same settings
 
@@ -270,7 +398,7 @@ The script automatically caches VM configurations to enable stop/start functiona
 ```json
 {
   "kernel": "/path/to/vmlinux-6.1.141",
-  "rootfs": "/path/to/rootfs.ext4",
+  "rootfs": "./rootfs/myvm.ext4",
   "tap_device": "tap0",
   "mmds_tap": "tap1",
   "vm_ip": "10.0.1.1",
@@ -298,13 +426,13 @@ The script automatically manages TAP device creation and assignment:
 **Auto-generation (recommended):**
 ```bash
 # Creates tap0 (main) and tap1 (MMDS) automatically
-./fcm create --name vm1 --rootfs disk.ext4 --tap-ip 192.168.1.1 --vm-ip 10.0.1.1
+./fcm create --name vm1 --image alpine.ext4 --rootfs-size 1G --tap-ip 192.168.1.1 --vm-ip 10.0.1.1
 ```
 
 **Explicit specification:**
 ```bash
 # Uses specified devices (fails if they already exist)
-./fcm create --name vm1 --tap-device tap5 --mmds-tap tap6 --rootfs disk.ext4 --tap-ip 192.168.1.1 --vm-ip 10.0.1.1
+./fcm create --name vm1 --tap-device tap5 --mmds-tap tap6 --image alpine.ext4 --rootfs-size 1G --tap-ip 192.168.1.1 --vm-ip 10.0.1.1
 ```
 
 ## Metadata Service (MMDS)
@@ -337,7 +465,8 @@ All VMs automatically receive a `network_config` object containing:
 ```bash
 ./fcm create \
   --name myvm \
-  --rootfs rootfs.ext4 \
+  --image alpine.ext4 \
+  --rootfs-size 1G \
   --tap-ip 172.16.0.1 \
   --vm-ip 172.16.0.2
 ```
@@ -347,7 +476,8 @@ All VMs automatically receive a `network_config` object containing:
 ./fcm create \
   --name myvm \
   --hostname web-server \
-  --rootfs rootfs.ext4 \
+  --image alpine.ext4 \
+  --rootfs-size 1G \
   --tap-ip 172.16.0.1 \
   --vm-ip 172.16.0.2 \
   --metadata '{"app": {"name": "web-server", "version": "1.2.3"}}'
@@ -372,7 +502,8 @@ EOF
 # Use metadata file
 ./fcm create \
   --name myvm \
-  --rootfs rootfs.ext4 \
+  --image alpine.ext4 \
+  --rootfs-size 1G \
   --tap-ip 172.16.0.1 \
   --vm-ip 172.16.0.2 \
   --metadata @metadata.json
@@ -487,7 +618,8 @@ vm2     | 10.4.17.2   | 2    | 512 MiB | ubuntu.ext4     | vmlinux         | tap
      --name vm1 \
      --hostname alpine-vm \
      --kernel vmlinux-6.1.141 \
-     --rootfs alpine.ext4 \
+     --image alpine.ext4 \
+     --rootfs-size 1G \
      --tap-ip 192.168.1.1 \
      --vm-ip 10.0.1.1
    ```
@@ -498,7 +630,8 @@ vm2     | 10.4.17.2   | 2    | 512 MiB | ubuntu.ext4     | vmlinux         | tap
      --name vm2 \
      --hostname ubuntu-server \
      --kernel vmlinux-5.15.0 \
-     --rootfs ubuntu.ext4 \
+     --image ubuntu.ext4 \
+     --rootfs-size 2G \
      --tap-ip 192.168.1.2 \
      --vm-ip 10.0.1.2
    ```
@@ -537,7 +670,8 @@ vm2     | 10.4.17.2   | 2    | 512 MiB | ubuntu.ext4     | vmlinux         | tap
      --name webserver \
      --hostname web-prod \
      --kernel vmlinux-6.1.141 \
-     --rootfs nginx.ext4 \
+     --image nginx.ext4 \
+     --rootfs-size 2G \
      --tap-ip 192.168.1.10 \
      --vm-ip 10.0.1.10 \
      --cpus 2 \
@@ -566,7 +700,8 @@ vm2     | 10.4.17.2   | 2    | 512 MiB | ubuntu.ext4     | vmlinux         | tap
    ./fcm create \
      --name myvm \
      --kernel vmlinux-6.1.141 \
-     --rootfs rootfs.ext4 \
+     --image alpine.ext4 \
+     --rootfs-size 1G \
      --tap-ip 172.16.0.1 \
      --vm-ip 172.16.0.2 \
      --foreground
@@ -615,19 +750,20 @@ vm2     | 10.4.17.2   | 2    | 512 MiB | ubuntu.ext4     | vmlinux         | tap
 The script performs these operations in sequence:
 
 1. **Load configuration** - Read .env file and process arguments
-2. **Auto-generate TAP devices** - Find available device names or validate explicit ones
-3. **Check socket availability** - Ensures socket is not in use
-4. **Clean up stale socket** - Removes existing socket file if present
-5. **Create supervisor config** - Generates supervisord configuration for VM (skipped in --foreground mode)
-6. **Start Firecracker process** - Uses supervisor to launch Firecracker daemon (or runs in foreground for debugging)
-7. **Set machine configuration** - Configures CPU and memory
-8. **Set boot source** - Points to kernel image with boot arguments
-9. **Set rootfs drive** - Configures the root filesystem
-10. **Setup TAP devices** - Creates both main and MMDS TAP devices with IP configuration
-11. **Set network interfaces** - Links host TAP devices to guest eth0 and mmds0
-12. **Configure MMDS** - Sets up metadata service with network configuration
-13. **Start microVM** - Initiates the virtual machine
-14. **Cache configuration** - Saves all VM settings to `cache/<vm_name>.json` for stop/start functionality
+2. **Build rootfs** - Copy base image and resize to create VM-specific rootfs file
+3. **Auto-generate TAP devices** - Find available device names or validate explicit ones
+4. **Check socket availability** - Ensures socket is not in use
+5. **Clean up stale socket** - Removes existing socket file if present
+6. **Create supervisor config** - Generates supervisord configuration for VM (skipped in --foreground mode)
+7. **Start Firecracker process** - Uses supervisor to launch Firecracker daemon (or runs in foreground for debugging)
+8. **Set machine configuration** - Configures CPU and memory
+9. **Set boot source** - Points to kernel image with boot arguments
+10. **Set rootfs drive** - Configures the built root filesystem
+11. **Setup TAP devices** - Creates both main and MMDS TAP devices with IP configuration
+12. **Set network interfaces** - Links host TAP devices to guest eth0 and mmds0
+13. **Configure MMDS** - Sets up metadata service with network configuration
+14. **Start microVM** - Initiates the virtual machine
+15. **Cache configuration** - Saves all VM settings to `cache/<vm_name>.json` for stop/start functionality
 
 ### DESTROY Action
 

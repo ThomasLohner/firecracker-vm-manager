@@ -66,6 +66,7 @@ From the documentation review, these are the critical API details:
 ## Project Overview
 
 The Firecracker VM Manager is a Python script with a bash wrapper (`fcm`) that automates the creation, destruction, stop/start/restart, and listing of Firecracker microVMs with full lifecycle management including:
+- **Image-based rootfs building system** for efficient VM creation from base images
 - Automatic supervisord integration for process management
 - VM configuration caching for stop/start functionality
 - TAP device auto-generation and network configuration
@@ -87,16 +88,17 @@ The Firecracker VM Manager is a Python script with a bash wrapper (`fcm`) that a
 
 ### Main Script: `firecracker_vm_manager.py`
 - **Purpose**: Core Python script for VM lifecycle management (executed by `fcm` wrapper)
-- **Actions**: `create`, `destroy`, `stop`, `start`, `restart`, `list` VMs, and `kernels`
+- **Actions**: `create`, `destroy`, `stop`, `start`, `restart`, `list` VMs, `kernels`, and `images`
 - **Dependencies**: `requests`, `requests-unixsocket`, `subprocess`, `os`, `pathlib`
 - **Requires**: Root/sudo access for network configuration and supervisor management
 
 ### Configuration File: `.env`
 - **Purpose**: Global default configuration values that apply to all VMs
-- **Required Settings**: `KERNEL_PATH`, `CPUS`, `MEMORY` - Must be provided in .env or via command line
+- **Required Settings**: `KERNEL_PATH`, `IMAGES_PATH`, `ROOTFS_PATH`, `CPUS`, `MEMORY` - Must be provided in .env or via command line
+- **Image Settings**: `IMAGE`, `ROOTFS_SIZE` - Default image file and rootfs size
 - **New Settings**: `SOCKET_PATH_PREFIX` - Controls socket file directory (default: /tmp)
 - **Priority**: Command line arguments override .env values
-- **Note**: VM-specific parameters (rootfs, network settings) are not configurable in .env
+- **Note**: VM-specific parameters (network settings) are not configurable in .env
 
 ### Documentation: `firecracker_vm_manager.md`
 - **Purpose**: User documentation with setup instructions, usage examples, and troubleshooting
@@ -140,6 +142,10 @@ The Firecracker VM Manager is a Python script with a bash wrapper (`fcm`) that a
 - `setup_mmds_tap_device()`: Creates MMDS TAP device
 - `remove_tap_device()`: Removes TAP device (routes auto-removed)
 
+#### Image-Based Rootfs Building (NEW MAJOR FEATURE)
+- `build_rootfs()`: Builds VM-specific rootfs from base images with resizing
+- `list_available_images()`: Lists available image files from IMAGES_PATH directory
+
 #### VM Discovery and Monitoring (NEW)
 - `discover_running_vms()`: Scans socket directory for running VMs
 - `get_vm_config()`: Gets VM configuration via /vm/config API
@@ -168,6 +174,33 @@ The Firecracker VM Manager is a Python script with a bash wrapper (`fcm`) that a
 
 ## Current Features
 
+### Image-Based Rootfs Building System (NEW MAJOR FEATURE)
+
+#### Automated Rootfs Creation
+- **Base Image Templates**: Source images in IMAGES_PATH directory serve as templates
+- **VM-Specific Rootfs**: Each VM gets its own rootfs file in ROOTFS_PATH directory  
+- **Automatic Copying**: Images are copied to `<ROOTFS_PATH>/<vm_name>.ext4`
+- **Filesystem Resizing**: Uses `resize2fs` to resize rootfs to specified size
+- **Format Support**: ext4, ext3, ext2, img, qcow2, raw image formats
+
+#### Force Overwrite Protection
+- **Default Behavior**: Prevents accidental overwriting of existing rootfs files
+- **Force Option**: `--force-rootfs` parameter allows intentional overwrites
+- **Clear Error Messages**: Helpful guidance when conflicts are detected
+- **Safety First**: Protects against data loss from accidental overwrites
+
+#### New Environment Variables
+- **IMAGES_PATH**: Directory containing base image files (default: ./images)
+- **ROOTFS_PATH**: Directory for VM-specific rootfs files (default: ./rootfs)  
+- **IMAGE**: Default image filename to use if --image not specified
+- **ROOTFS_SIZE**: Default rootfs size (e.g., 1G, 512M) if --rootfs-size not specified
+
+#### Images Action (NEW)
+- **Images Command**: `./fcm images` lists all available base images
+- **Format Discovery**: Automatically finds supported image file formats
+- **Size and Date Info**: Shows file size and modification date for each image
+- **Usage Examples**: Provides example commands for using discovered images
+
 ### VM Configuration Caching System (NEW MAJOR FEATURE)
 
 #### Automatic Configuration Persistence
@@ -182,7 +215,7 @@ The Firecracker VM Manager is a Python script with a bash wrapper (`fcm`) that a
 - **Socket Cleanup**: Stop action removes socket file to ensure clean restart
 - **Configuration Validation**: Start action validates all required fields before proceeding
 
-### Six Operation Modes
+### Eight Operation Modes
 
 #### 1. Supervisor Mode (Default)
 - Creates supervisor configuration file
@@ -219,6 +252,18 @@ The Firecracker VM Manager is a Python script with a bash wrapper (`fcm`) that a
 - Queries VM configuration via API
 - Displays comprehensive table with VM information
 
+#### 7. Images Mode (NEW)
+- Lists available base image files from IMAGES_PATH directory
+- Shows file size and modification date information
+- Supports multiple image formats (ext4, ext3, ext2, img, qcow2, raw)
+- Provides usage examples for discovered images
+
+#### 8. Kernels Mode (ENHANCED)
+- Lists available kernel files from KERNEL_PATH directory
+- Shows file size and modification date information
+- Supports kernel file patterns (vmlinux*, bzImage*, kernel*, Image*)
+- Provides usage examples for discovered kernels
+
 ### TAP Device Auto-Generation (NEW MAJOR FEATURE)
 
 #### Auto-Generation Features
@@ -232,13 +277,13 @@ The Firecracker VM Manager is a Python script with a bash wrapper (`fcm`) that a
 **Auto-generation (default):**
 ```bash
 # Creates tap0 (main) and tap1 (MMDS) automatically
-./fcm create --name vm1 --rootfs disk.ext4 --tap-ip 192.168.1.1 --vm-ip 10.0.1.1
+./fcm create --name vm1 --image alpine.ext4 --rootfs-size 1G --tap-ip 192.168.1.1 --vm-ip 10.0.1.1
 ```
 
 **Explicit specification:**
 ```bash
 # Uses specified devices (fails if they already exist)
-./fcm create --name vm1 --tap-device tap5 --mmds-tap tap6 --rootfs disk.ext4 --tap-ip 192.168.1.1 --vm-ip 10.0.1.1
+./fcm create --name vm1 --tap-device tap5 --mmds-tap tap6 --image alpine.ext4 --rootfs-size 1G --tap-ip 192.168.1.1 --vm-ip 10.0.1.1
 ```
 
 ### Socket Path Management (NEW)
@@ -297,19 +342,21 @@ The Firecracker VM Manager is a Python script with a bash wrapper (`fcm`) that a
 ## Command Line Interface
 
 ### Actions
-- `create`: Create and start a new VM
+- `create`: Create and start a new VM (builds rootfs from image)
 - `destroy`: Stop and destroy an existing VM
 - `stop`: Stop a VM without removing TAP devices (NEW)
 - `start`: Start a previously created VM from cached configuration (NEW)
 - `restart`: Restart a VM by stopping and then starting it (NEW)
 - `list`: List all running VMs with configuration details
 - `kernels`: List available kernel files from KERNEL_PATH directory
+- `images`: List available image files from IMAGES_PATH directory (NEW)
 
 ### Primary Usage
 All commands are executed through the `fcm` wrapper script:
 ```bash
 ./fcm kernels                                    # List available kernels
-./fcm create --name myvm --kernel vmlinux-6.1.141 --rootfs disk.ext4 ...
+./fcm images                                     # List available images
+./fcm create --name myvm --kernel vmlinux-6.1.141 --image alpine.ext4 --rootfs-size 1G ...
 ./fcm list                                       # List running VMs
 ./fcm stop --name myvm                           # Stop VM (preserves TAP devices and cache)
 ./fcm start --name myvm                          # Start VM from cache
@@ -324,7 +371,8 @@ All commands are executed through the `fcm` wrapper script:
 
 #### Create Action Required
 - `--kernel`: Kernel filename (must exist in KERNEL_PATH directory)
-- `--rootfs`: Path to root filesystem image
+- `--image`: Image filename (must exist in IMAGES_PATH directory, can be set in .env as IMAGE)
+- `--rootfs-size`: Size to resize rootfs to (can be set in .env as ROOTFS_SIZE)
 - `--cpus`: Number of vCPUs - can be set in .env as CPUS
 - `--memory`: Memory in MiB - can be set in .env as MEMORY
 - `--tap-ip`: IP address for TAP device on host
@@ -337,6 +385,7 @@ All commands are executed through the `fcm` wrapper script:
 - `--metadata`: JSON metadata for MMDS (provide JSON string or file path starting with @)
 - `--hostname`: Hostname for the VM (defaults to VM name if not specified)
 - `--foreground`: Run in foreground for debugging
+- `--force-rootfs`: Force overwrite existing rootfs file if it exists (NEW)
 
 #### Destroy Action Optional (ENHANCED)
 - `--tap-device`: TAP device name to remove (optional with warning if not specified)
@@ -346,10 +395,16 @@ All commands are executed through the `fcm` wrapper script:
 - No additional parameters required
 - Uses socket directory from SOCKET_PATH_PREFIX
 
-#### Kernels Action (NEW)
+#### Kernels Action (ENHANCED)
 - No additional parameters required
 - Uses KERNEL_PATH from .env file to scan for available kernels
 - KERNEL_PATH must be a directory containing kernel files
+
+#### Images Action (NEW)
+- No additional parameters required
+- Uses IMAGES_PATH from .env file to scan for available images
+- IMAGES_PATH must be a directory containing image files
+- Supports formats: ext4, ext3, ext2, img, qcow2, raw
 
 ## Firecracker API Integration
 
@@ -490,7 +545,7 @@ The `fcm` wrapper script provides **zero-configuration** Python environment mana
 
 #### First Run Experience
 ```bash
-./fcm create --name vm1 --rootfs disk.ext4 --tap-ip 192.168.1.1 --vm-ip 10.0.1.1
+./fcm create --name vm1 --image alpine.ext4 --rootfs-size 1G --tap-ip 192.168.1.1 --vm-ip 10.0.1.1
 # Output: Creating Python virtual environment...
 #         Installing missing Python modules: requests requests-unixsocket
 #         [Continues with VM creation...]
@@ -510,6 +565,7 @@ pip install requests requests-unixsocket
 ### System Requirements
 - Firecracker binary at `/usr/sbin/firecracker`
 - Supervisor daemon running
+- `resize2fs` utility for rootfs resizing (NEW REQUIREMENT)
 - Root/sudo access for:
   - Network device management (`ip` commands)
   - Supervisor configuration (`/etc/supervisor/conf.d/`)
@@ -517,25 +573,32 @@ pip install requests requests-unixsocket
 - `ip` command for network operations (gracefully handles absence)
 
 ### File Permissions
-- Read access to kernel and rootfs files
+- Read access to kernel files and image files
+- Write access to IMAGES_PATH directory (for image files)
+- Write access to ROOTFS_PATH directory (for built rootfs files)
 - Write access to socket directory (configurable)
 - Write access to `/etc/supervisor/conf.d/`
 - Write access to `/var/log/` for Firecracker logs
 
 ## Common Workflows
 
-### Creating VMs with Auto-Generation (NEW DEFAULT)
+### Creating VMs with Image-Based Rootfs Building (NEW DEFAULT)
 1. Parse command line arguments and .env configuration
-2. Auto-generate TAP device names if not specified
-3. Validate explicitly specified devices don't exist
-4. Check socket availability in configured directory
-5. Clean up stale socket files
-6. Either:
+2. **Build rootfs from image** (NEW STEP):
+   - Validate image exists in IMAGES_PATH
+   - Check for existing rootfs conflicts (unless --force-rootfs)
+   - Copy image to ROOTFS_PATH as `<vm_name>.ext4`
+   - Resize filesystem to specified size using resize2fs
+3. Auto-generate TAP device names if not specified
+4. Validate explicitly specified devices don't exist
+5. Check socket availability in configured directory
+6. Clean up stale socket files
+7. Either:
    - **Supervisor mode**: Create config → reload supervisor → configure VM
    - **Foreground mode**: Setup network → start Firecracker → configure VM
-7. Setup TAP devices and networking (both main and MMDS)
-8. Configure Firecracker via API (including MMDS)
-9. Start the VM
+8. Setup TAP devices and networking (both main and MMDS)
+9. Configure Firecracker via API (including MMDS)
+10. Start the VM
 
 ### Listing VMs (NEW)
 1. Scan socket directory for .sock files
@@ -736,30 +799,36 @@ If the GitHub links become unavailable, you can:
 ## Project Status Summary
 
 ### Recently Implemented Features (Latest Session)
-1. **VM Configuration Caching System**: Complete caching system for stop/start functionality
-2. **Stop Action**: New command to stop VMs while preserving TAP devices and configuration
-3. **Start Action**: New command to restart VMs from cached configuration
-4. **Restart Action**: New command that combines stop and start operations for seamless VM restart
-5. **Cache Directory Management**: Auto-creates `cache/` directory for VM configuration storage
-6. **Configuration Persistence**: JSON-based storage of complete VM settings
-7. **Socket Cleanup**: Stop action removes socket files to ensure clean restart
-8. **Enhanced Debugging**: Improved Firecracker startup detection with comprehensive error reporting
-9. **Kernels Action**: Command to list available kernel files from KERNEL_PATH directory
-10. **FCM Wrapper Script**: Bash wrapper that auto-manages Python virtual environment and dependencies
-11. **TAP Device Auto-Generation**: Complete system for automatic TAP device discovery and assignment
-12. **Socket Path Configuration**: SOCKET_PATH_PREFIX environment variable for configurable socket directories
-13. **VM Listing and Monitoring**: Comprehensive list command with API querying and table display
-14. **Always-On MMDS**: All VMs now get MMDS with network configuration and hostname
+1. **Image-Based Rootfs Building System**: Complete system for building VM-specific rootfs from base images
+2. **Force Overwrite Protection**: Prevents accidental overwrites with --force-rootfs override option
+3. **Images Action**: New command to list available image files from IMAGES_PATH directory
+4. **New Environment Variables**: IMAGES_PATH, ROOTFS_PATH, IMAGE, ROOTFS_SIZE for image management
+5. **VM Configuration Caching System**: Complete caching system for stop/start functionality
+6. **Stop Action**: New command to stop VMs while preserving TAP devices and configuration
+7. **Start Action**: New command to restart VMs from cached configuration
+8. **Restart Action**: New command that combines stop and start operations for seamless VM restart
+9. **Cache Directory Management**: Auto-creates `cache/` directory for VM configuration storage
+10. **Configuration Persistence**: JSON-based storage of complete VM settings
+11. **Socket Cleanup**: Stop action removes socket files to ensure clean restart
+12. **Enhanced Debugging**: Improved Firecracker startup detection with comprehensive error reporting
+13. **Kernels Action**: Command to list available kernel files from KERNEL_PATH directory
+14. **FCM Wrapper Script**: Bash wrapper that auto-manages Python virtual environment and dependencies
+15. **TAP Device Auto-Generation**: Complete system for automatic TAP device discovery and assignment
+16. **Socket Path Configuration**: SOCKET_PATH_PREFIX environment variable for configurable socket directories
+17. **VM Listing and Monitoring**: Comprehensive list command with API querying and table display
+18. **Always-On MMDS**: All VMs now get MMDS with network configuration and hostname
 
 ### Current Capabilities
 - **Zero-Setup Execution**: `fcm` wrapper handles all environment and dependency management
-- **Kernel Management**: List available kernels and use filenames instead of full paths
+- **Image-Based VM Creation**: Build VM-specific rootfs from base images with customizable sizes
+- **Resource Management**: List available kernels and images, manage VM lifecycle efficiently
 - **Complete VM Lifecycle**: Create, stop, start, restart, destroy, and list VMs
 - **Configuration Persistence**: Automatic caching enables stop/start without losing settings
 - **Automatic Network Setup**: TAP device auto-generation and configuration
 - **Production Ready**: Supervisor integration with configurable paths
 - **Development Friendly**: Foreground mode for debugging
 - **Monitoring**: Real-time VM discovery and status display
+- **Safety Features**: Force overwrite protection prevents accidental data loss
 - **Robust**: Comprehensive error handling and validation
 
 ### Architecture Status
@@ -798,10 +867,10 @@ def parse_metadata(metadata_arg, tap_ip, vm_ip, hostname=None):
 **Usage Examples:**
 ```bash
 # Uses VM name as hostname
-./fcm create --name web-vm --rootfs disk.ext4 --tap-ip 192.168.1.1 --vm-ip 10.0.1.1
+./fcm create --name web-vm --image alpine.ext4 --rootfs-size 1G --tap-ip 192.168.1.1 --vm-ip 10.0.1.1
 
 # Custom hostname
-./fcm create --name vm1 --hostname production-nginx --rootfs disk.ext4 --tap-ip 192.168.1.1 --vm-ip 10.0.1.1
+./fcm create --name vm1 --hostname production-nginx --image alpine.ext4 --rootfs-size 1G --tap-ip 192.168.1.1 --vm-ip 10.0.1.1
 ```
 
 This enhancement ensures all VMs have proper hostname configuration available through the MMDS interface, improving VM identification and configuration management.

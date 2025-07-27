@@ -426,6 +426,62 @@ class FirecrackerVMManager:
             print(f"Error accessing kernel directory {kernel_dir}: {e}", file=sys.stderr)
             return False
 
+    def list_available_images(self, images_path_env):
+        """List available image files from IMAGES_PATH directory"""
+        if not images_path_env:
+            print("Error: IMAGES_PATH not set in .env file", file=sys.stderr)
+            return False
+        
+        images_dir = Path(images_path_env)
+        if not images_dir.is_dir():
+            print(f"Error: IMAGES_PATH '{images_path_env}' is not a valid directory", file=sys.stderr)
+            return False
+            
+        try:
+            # Look for common filesystem image patterns
+            image_patterns = ['*.ext4', '*.ext3', '*.ext2', '*.img', '*.qcow2', '*.raw']
+            image_files = []
+            
+            for pattern in image_patterns:
+                image_files.extend(images_dir.glob(pattern))
+            
+            # Remove duplicates and sort
+            image_files = sorted(set(image_files), key=lambda x: x.name)
+            
+            if not image_files:
+                print(f"No image files found in {images_dir}")
+                print("Looking for files matching: *.ext4, *.ext3, *.ext2, *.img, *.qcow2, *.raw")
+                return True
+            
+            print(f"Available images in {images_dir}:")
+            print()
+            
+            # Print table header
+            print(f"{'Filename':<30} {'Size':<10} {'Modified'}")
+            print('-' * 55)
+            
+            for image_file in image_files:
+                try:
+                    stat = image_file.stat()
+                    size_mb = stat.st_size / (1024 * 1024)
+                    modified = Path(image_file).stat().st_mtime
+                    from datetime import datetime
+                    modified_str = datetime.fromtimestamp(modified).strftime('%Y-%m-%d %H:%M')
+                    
+                    print(f"{image_file.name:<30} {size_mb:>6.1f} MB {modified_str}")
+                except Exception as e:
+                    print(f"{image_file.name:<30} {'N/A':<10} {'N/A'}")
+            
+            print()
+            print(f"Usage: ./fcm create --image <filename> ...")
+            print(f"Example: ./fcm create --image {image_files[0].name} ...")
+            
+            return True
+            
+        except Exception as e:
+            print(f"Error accessing images directory {images_dir}: {e}", file=sys.stderr)
+            return False
+
     def resolve_kernel_path(self, kernel_filename, kernel_path_env):
         """Resolve kernel filename to full path using KERNEL_PATH directory"""
         if not kernel_filename:
@@ -447,6 +503,82 @@ class FirecrackerVMManager:
         else:
             print(f"Error: Kernel file '{kernel_filename}' not found in {kernel_dir}", file=sys.stderr)
             print(f"Use './fcm kernels' to see available kernels")
+            return None
+
+    def build_rootfs(self, vm_name, image_filename, images_path_env, rootfs_path_env, rootfs_size, force_overwrite=False):
+        """Build rootfs by copying image file and resizing it"""
+        print(f"Building rootfs for VM: {vm_name}...")
+        
+        # Validate IMAGES_PATH
+        if not images_path_env:
+            print("Error: IMAGES_PATH not set in .env file", file=sys.stderr)
+            return None
+            
+        images_dir = Path(images_path_env)
+        if not images_dir.is_dir():
+            print(f"Error: IMAGES_PATH '{images_path_env}' is not a valid directory", file=sys.stderr)
+            return None
+        
+        # Validate ROOTFS_PATH
+        if not rootfs_path_env:
+            print("Error: ROOTFS_PATH not set in .env file", file=sys.stderr)
+            return None
+            
+        rootfs_dir = Path(rootfs_path_env)
+        
+        # Create rootfs directory if it doesn't exist
+        try:
+            rootfs_dir.mkdir(parents=True, exist_ok=True)
+            print(f"✓ Rootfs directory ready: {rootfs_dir}")
+        except Exception as e:
+            print(f"Error creating rootfs directory {rootfs_dir}: {e}", file=sys.stderr)
+            return None
+        
+        # Check if image file exists
+        image_file = images_dir / image_filename
+        if not image_file.exists():
+            print(f"Error: Image file '{image_filename}' not found in {images_dir}", file=sys.stderr)
+            print(f"Use './fcm images' to see available images")
+            return None
+        
+        # Define destination rootfs file
+        rootfs_file = rootfs_dir / f"{vm_name}.ext4"
+        
+        # Check if rootfs file already exists
+        if rootfs_file.exists():
+            if not force_overwrite:
+                print(f"Error: Rootfs file already exists: {rootfs_file}", file=sys.stderr)
+                print(f"A VM with name '{vm_name}' may already have a rootfs file.", file=sys.stderr)
+                print(f"Please choose a different VM name, remove the existing file, or use --force-rootfs to overwrite.", file=sys.stderr)
+                return None
+            else:
+                print(f"Warning: Overwriting existing rootfs file: {rootfs_file}")
+                print(f"✓ Force overwrite enabled")
+        
+        try:
+            # Copy image file to rootfs location
+            print(f"Copying {image_file} -> {rootfs_file}")
+            import shutil
+            shutil.copy2(image_file, rootfs_file)
+            print(f"✓ Image copied to rootfs location")
+            
+            # Resize the rootfs file
+            print(f"Resizing rootfs to {rootfs_size}")
+            self._run_command(["resize2fs", str(rootfs_file), rootfs_size])
+            print(f"✓ Rootfs resized to {rootfs_size}")
+            
+            print(f"✓ Rootfs built successfully: {rootfs_file}")
+            return str(rootfs_file)
+            
+        except (subprocess.CalledProcessError, Exception) as e:
+            print(f"Error building rootfs: {e}", file=sys.stderr)
+            # Clean up partially created file
+            if rootfs_file.exists():
+                try:
+                    rootfs_file.unlink()
+                    print(f"✓ Cleaned up partial rootfs file: {rootfs_file}")
+                except Exception:
+                    pass
             return None
 
     def _get_mmds_data_for_vm(self, socket_path):
@@ -1170,56 +1302,66 @@ USAGE:
     firecracker_vm_manager.py ACTION --name VM_NAME [OPTIONS]
 
 ACTIONS:
-    create          Create and start a new VM
+    create          Create and start a new VM (builds rootfs from image)
     destroy         Destroy an existing VM and clean up resources
     stop            Stop a VM without removing TAP devices
     start           Start a previously created VM from cached configuration
     restart         Restart a VM by stopping and then starting it
     list            List all running VMs with their configuration
     kernels         List available kernel files from KERNEL_PATH directory
+    images          List available image files from IMAGES_PATH directory
 
 REQUIRED PARAMETERS:
-    --name          Name of the VM (not required for list and kernels actions)
+    --name          Name of the VM (not required for list, kernels, and images actions)
 
 OPTIONAL PARAMETERS:
     --socket        Path to Firecracker API socket file (default: /tmp/<vm_name>.sock)
 
 REQUIRED FOR CREATE ACTION:
-    --kernel        Path to kernel image file
-    --rootfs        Path to rootfs device file
+    --kernel        Kernel filename (must exist in KERNEL_PATH directory)
+    --image         Image filename (must exist in IMAGES_PATH directory)
+    --rootfs-size   Size to resize rootfs to (e.g., 1G, 512M, 2048M)
     --tap-ip        IP address for TAP device on host
     --vm-ip         IP address for VM (guest)
 
 OPTIONAL FOR CREATE ACTION:
     --tap-device    TAP device name on host (auto-generated if not specified)
-    --mmds-tap      MMDS TAP device name (auto-generated if not specified when using --metadata)
+    --mmds-tap      MMDS TAP device name (auto-generated if not specified)
 
 OPTIONAL FOR DESTROY ACTION:
     --tap-device    TAP device name to remove (required if not using auto-discovery)
     --mmds-tap      MMDS TAP device name to remove (required if VM was created with metadata)
 
 OPTIONAL PARAMETERS (CREATE ONLY):
-    --cpus          Number of vCPUs (default: 1)
-    --memory        Memory in MiB (default: 128)
+    --cpus          Number of vCPUs (can be set in .env as CPUS)
+    --memory        Memory in MiB (can be set in .env as MEMORY)
     --hostname      Hostname for the VM (defaults to VM name if not specified)
     --foreground    Run Firecracker in foreground for debugging (skips supervisor)
+    --force-rootfs  Force overwrite existing rootfs file if it exists
     --help, -h      Show this help message
 
 EXAMPLE USAGE:
+    # List available images and kernels
+    ./firecracker_vm_manager.py images
+    ./firecracker_vm_manager.py kernels
+
     # Create a VM with auto-generated TAP device (simplest form)
-    ./firecracker_vm_manager.py create --name myvm --kernel vmlinux --rootfs rootfs.ext4 --tap-ip 172.16.0.1 --vm-ip 172.16.0.2
+    ./firecracker_vm_manager.py create --name myvm --kernel vmlinux-6.1.141 --image alpine.ext4 --rootfs-size 1G --tap-ip 172.16.0.1 --vm-ip 172.16.0.2
 
     # Create a VM with specific TAP device
-    ./firecracker_vm_manager.py create --name myvm --kernel vmlinux --rootfs rootfs.ext4 --tap-device tap5 --tap-ip 172.16.0.1 --vm-ip 172.16.0.2
+    ./firecracker_vm_manager.py create --name myvm --kernel vmlinux-6.1.141 --image alpine.ext4 --rootfs-size 1G --tap-device tap5 --tap-ip 172.16.0.1 --vm-ip 172.16.0.2
 
     # Create a VM with metadata (MMDS TAP auto-generated)
-    ./firecracker_vm_manager.py create --name myvm --kernel vmlinux --rootfs rootfs.ext4 --tap-ip 172.16.0.1 --vm-ip 172.16.0.2 --metadata '{"app":"web"}'
+    ./firecracker_vm_manager.py create --name myvm --kernel vmlinux-6.1.141 --image alpine.ext4 --rootfs-size 1G --tap-ip 172.16.0.1 --vm-ip 172.16.0.2 --metadata '{"app":"web"}'
 
     # Create a VM with custom resources and specific devices
-    ./firecracker_vm_manager.py create --name myvm --kernel vmlinux --rootfs rootfs.ext4 --tap-device tap0 --mmds-tap tap1 --tap-ip 172.16.0.1 --vm-ip 172.16.0.2 --cpus 2 --memory 512
+    ./firecracker_vm_manager.py create --name myvm --kernel vmlinux-6.1.141 --image alpine.ext4 --rootfs-size 2G --tap-device tap0 --mmds-tap tap1 --tap-ip 172.16.0.1 --vm-ip 172.16.0.2 --cpus 2 --memory 512
 
     # Create a VM in foreground mode for debugging
-    ./firecracker_vm_manager.py create --name myvm --kernel vmlinux --rootfs rootfs.ext4 --tap-ip 172.16.0.1 --vm-ip 172.16.0.2 --foreground
+    ./firecracker_vm_manager.py create --name myvm --kernel vmlinux-6.1.141 --image alpine.ext4 --rootfs-size 1G --tap-ip 172.16.0.1 --vm-ip 172.16.0.2 --foreground
+
+    # Force overwrite existing rootfs file
+    ./firecracker_vm_manager.py create --name myvm --kernel vmlinux-6.1.141 --image alpine.ext4 --rootfs-size 1G --tap-ip 172.16.0.1 --vm-ip 172.16.0.2 --force-rootfs
 
     # Destroy a VM (with auto-cleanup warning)
     ./firecracker_vm_manager.py destroy --name myvm
@@ -1238,13 +1380,11 @@ EXAMPLE USAGE:
 
     # List all running VMs
     ./firecracker_vm_manager.py list
-    
-    # List available kernels
-    ./firecracker_vm_manager.py kernels
 
 PREREQUISITES:
     - Root/sudo access for network configuration and supervisor management
     - Supervisor daemon running
+    - resize2fs utility for rootfs resizing
     - Python dependencies: pip install requests requests-unixsocket
 """
     print(help_text)
@@ -1253,11 +1393,12 @@ PREREQUISITES:
 
 def main():
     parser = argparse.ArgumentParser(description="Manage Firecracker VMs", add_help=False)
-    parser.add_argument("action", nargs="?", choices=["create", "destroy", "stop", "start", "restart", "list", "kernels"], help="Action to perform")
+    parser.add_argument("action", nargs="?", choices=["create", "destroy", "stop", "start", "restart", "list", "kernels", "images"], help="Action to perform")
     parser.add_argument("--name", help="Name of the VM")
     parser.add_argument("--socket", help="Path to Firecracker API socket (default: /tmp/<vm_name>.sock)")
     parser.add_argument("--kernel", help="Kernel filename (must exist in KERNEL_PATH directory)")
-    parser.add_argument("--rootfs", help="Path to rootfs device")
+    parser.add_argument("--image", help="Image filename (must exist in IMAGES_PATH directory, can be set in .env as IMAGE)")
+    parser.add_argument("--rootfs-size", help="Size to resize rootfs to (can be set in .env as ROOTFS_SIZE)")
     parser.add_argument("--cpus", type=int, help="Number of vCPUs (can be set in .env as CPUS)")
     parser.add_argument("--memory", type=int, help="Memory in MiB (can be set in .env as MEMORY)")
     parser.add_argument("--tap-device", help="TAP device name on host")
@@ -1267,6 +1408,7 @@ def main():
     parser.add_argument("--mmds-tap", help="TAP device name for MMDS interface (enables MMDS with network config)")
     parser.add_argument("--hostname", help="Hostname for the VM (defaults to VM name if not specified)")
     parser.add_argument("--foreground", action="store_true", help="Run Firecracker in foreground for debugging")
+    parser.add_argument("--force-rootfs", action="store_true", help="Force overwrite existing rootfs file if it exists")
     parser.add_argument("--help", "-h", action="store_true", help="Show help message")
 
     args = parser.parse_args()
@@ -1278,8 +1420,8 @@ def main():
     # Load configuration from .env file
     env_config = load_env_config()
 
-    # Check for basic required parameters (except for list and kernels actions)
-    if not args.name and args.action not in ["list", "kernels"]:
+    # Check for basic required parameters (except for list, kernels, and images actions)
+    if not args.name and args.action not in ["list", "kernels", "images"]:
         print("Error: --name is required for create, destroy, stop, start, and restart actions", file=sys.stderr)
         show_help_and_exit()
     
@@ -1295,29 +1437,37 @@ def main():
         except Exception as e:
             print(f"Warning: Could not create socket directory {socket_path_prefix}: {e}", file=sys.stderr)
     
-    # Set default socket path if not provided (not needed for list or kernels actions)
-    if not args.socket and args.action not in ["list", "kernels"]:
+    # Set default socket path if not provided (not needed for list, kernels, or images actions)
+    if not args.socket and args.action not in ["list", "kernels", "images"]:
         args.socket = str(Path(socket_path_prefix) / f"{args.name}.sock")
     
     # Set kernel path from .env if not provided via command line
     if not args.kernel and 'KERNEL_PATH' in env_config:
         args.kernel = env_config['KERNEL_PATH']
     
+    # Set image from .env if not provided via command line
+    if not args.image and 'IMAGE' in env_config and env_config['IMAGE']:
+        args.image = env_config['IMAGE']
+    
+    # Set rootfs size from .env if not provided via command line
+    if not args.rootfs_size and 'ROOTFS_SIZE' in env_config:
+        args.rootfs_size = env_config['ROOTFS_SIZE']
+    
     # Set CPU count from .env if available
-    if 'CPUS' in env_config:
+    if not args.cpus and 'CPUS' in env_config:
         try:
             args.cpus = int(env_config['CPUS'])
         except ValueError:
             print(f"Warning: Invalid CPUS value in .env file: {env_config['CPUS']}", file=sys.stderr)
     
     # Set memory from .env if available
-    if 'MEMORY' in env_config:
+    if not args.memory and 'MEMORY' in env_config:
         try:
             args.memory = int(env_config['MEMORY'])
         except ValueError:
             print(f"Warning: Invalid MEMORY value in .env file: {env_config['MEMORY']}", file=sys.stderr)
     
-    # Create VM manager (use dummy socket path for list and kernels actions)
+    # Create VM manager (use dummy socket path for list, kernels, and images actions)
     socket_path = args.socket if args.socket else str(Path(socket_path_prefix) / "dummy.sock")
     vm_manager = FirecrackerVMManager(socket_path, socket_path_prefix)
 
@@ -1328,11 +1478,19 @@ def main():
             sys.exit(1)
         return
 
+    elif args.action == "images":
+        # List available images
+        success = vm_manager.list_available_images(env_config.get('IMAGES_PATH'))
+        if not success:
+            sys.exit(1)
+        return
+
     elif args.action == "create":
-        # Check for create-specific required parameters (tap-device now optional)
+        # Check for create-specific required parameters
         create_required = {
             "kernel": args.kernel,
-            "rootfs": args.rootfs,
+            "image": args.image,
+            "rootfs-size": args.rootfs_size,
             "tap-ip": args.tap_ip,
             "vm-ip": args.vm_ip,
             "cpus": args.cpus,
@@ -1346,6 +1504,10 @@ def main():
             env_hints = []
             if 'kernel' in missing_params:
                 env_hints.append("KERNEL_PATH=<path>")
+            if 'image' in missing_params:
+                env_hints.append("IMAGE=<filename>")
+            if 'rootfs-size' in missing_params:
+                env_hints.append("ROOTFS_SIZE=<size>")
             if 'cpus' in missing_params:
                 env_hints.append("CPUS=<number>")
             if 'memory' in missing_params:
@@ -1361,6 +1523,18 @@ def main():
         resolved_kernel_path = vm_manager.resolve_kernel_path(args.kernel, env_config.get('KERNEL_PATH'))
         if not resolved_kernel_path:
             sys.exit(1)  # Error message already printed by resolve_kernel_path
+
+        # Build rootfs from image
+        rootfs_path = vm_manager.build_rootfs(
+            vm_name=args.name,
+            image_filename=args.image,
+            images_path_env=env_config.get('IMAGES_PATH'),
+            rootfs_path_env=env_config.get('ROOTFS_PATH'),
+            rootfs_size=args.rootfs_size,
+            force_overwrite=args.force_rootfs
+        )
+        if not rootfs_path:
+            sys.exit(1)  # Error message already printed by build_rootfs
 
         # Auto-generate TAP device name if not specified
         if not args.tap_device:
@@ -1398,7 +1572,7 @@ def main():
         success = vm_manager.create_vm(
             vm_name=args.name,
             kernel_path=resolved_kernel_path,
-            rootfs_path=args.rootfs,
+            rootfs_path=rootfs_path,
             tap_device=args.tap_device,
             tap_ip=args.tap_ip,
             vm_ip=args.vm_ip,
