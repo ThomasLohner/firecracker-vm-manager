@@ -707,11 +707,6 @@ autostart=true
         """Create VM in foreground mode for debugging"""
         import signal
         
-        # Setup TAP device first
-        if not self.setup_tap_device(tap_device, tap_ip, vm_ip):
-            print("Failed to setup TAP device", file=sys.stderr)
-            return False
-        
         print(f"Starting Firecracker in foreground mode...")
         print(f"Command: /usr/sbin/firecracker --id {vm_name} --api-sock {self.socket_path}")
         
