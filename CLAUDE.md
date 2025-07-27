@@ -65,8 +65,9 @@ From the documentation review, these are the critical API details:
 
 ## Project Overview
 
-The Firecracker VM Manager is a Python script with a bash wrapper (`fcm`) that automates the creation, destruction, and listing of Firecracker microVMs with full lifecycle management including:
+The Firecracker VM Manager is a Python script with a bash wrapper (`fcm`) that automates the creation, destruction, stop/start/restart, and listing of Firecracker microVMs with full lifecycle management including:
 - Automatic supervisord integration for process management
+- VM configuration caching for stop/start functionality
 - TAP device auto-generation and network configuration
 - Complete resource cleanup
 - Debugging support via foreground mode
@@ -86,7 +87,7 @@ The Firecracker VM Manager is a Python script with a bash wrapper (`fcm`) that a
 
 ### Main Script: `firecracker_vm_manager.py`
 - **Purpose**: Core Python script for VM lifecycle management (executed by `fcm` wrapper)
-- **Actions**: `create`, `destroy`, and `list` VMs
+- **Actions**: `create`, `destroy`, `stop`, `start`, `restart`, `list` VMs, and `kernels`
 - **Dependencies**: `requests`, `requests-unixsocket`, `subprocess`, `os`, `pathlib`
 - **Requires**: Root/sudo access for network configuration and supervisor management
 
@@ -119,7 +120,16 @@ The Firecracker VM Manager is a Python script with a bash wrapper (`fcm`) that a
 - `create_vm_supervisor()`: Creates VM using supervisord (default mode)
 - `create_vm_foreground()`: Creates VM in foreground for debugging
 - `destroy_vm()`: Destroys VM and cleans up all resources (including MMDS TAP)
+- `stop_vm()`: Stops VM process while preserving TAP devices and configuration cache
+- `start_vm()`: Starts VM from cached configuration
+- `restart_vm()`: Restarts VM by calling stop_vm() then start_vm()
 - `configure_and_start()`: Configures Firecracker API and starts VM
+
+#### VM Configuration Caching (NEW)
+- `_ensure_cache_directory()`: Creates cache directory if it doesn't exist
+- `save_vm_config()`: Saves VM configuration to cache file after successful creation
+- `load_vm_config()`: Loads VM configuration from cache file for restart
+- `remove_vm_config_cache()`: Removes cached configuration file
 
 #### TAP Device Management (NEW)
 - `discover_existing_tap_devices()`: Scans system for existing TAP devices
@@ -158,7 +168,21 @@ The Firecracker VM Manager is a Python script with a bash wrapper (`fcm`) that a
 
 ## Current Features
 
-### Three Operation Modes
+### VM Configuration Caching System (NEW MAJOR FEATURE)
+
+#### Automatic Configuration Persistence
+- **Cache Directory**: Auto-creates `cache/` directory for VM configurations
+- **JSON Storage**: Saves complete VM config as `cache/<vm_name>.json` after successful creation
+- **Configuration Data**: Stores kernel, rootfs, TAP devices, IPs, CPU/memory, hostname, creation timestamp
+- **Stop/Start Workflow**: Enables stopping VMs without losing configuration for later restart
+
+#### Stop/Start Actions (NEW)
+- **Stop Action**: `./fcm stop --name <vm_name>` - Stops VM process while preserving TAP devices and cache
+- **Start Action**: `./fcm start --name <vm_name>` - Restarts VM from cached configuration
+- **Socket Cleanup**: Stop action removes socket file to ensure clean restart
+- **Configuration Validation**: Start action validates all required fields before proceeding
+
+### Six Operation Modes
 
 #### 1. Supervisor Mode (Default)
 - Creates supervisor configuration file
@@ -172,7 +196,25 @@ The Firecracker VM Manager is a Python script with a bash wrapper (`fcm`) that a
 - No supervisor configuration
 - Automatic cleanup on termination (Ctrl+C or process exit)
 
-#### 3. List Mode (NEW)
+#### 3. Stop Mode (NEW)
+- Stops VM via `supervisorctl stop <vm_name>`
+- Removes socket file for clean restart
+- Preserves TAP devices and configuration cache
+- Enables restart without losing VM settings
+
+#### 4. Start Mode (NEW)
+- Reads cached VM configuration from `cache/<vm_name>.json`
+- Starts Firecracker process via `supervisorctl start <vm_name>`
+- Reconfigures VM with all original settings
+- Restores complete VM state from cache
+
+#### 5. Restart Mode (NEW)
+- Combines stop and start operations in sequence
+- Calls `stop_vm()` followed by `start_vm()`
+- Preserves all configuration and network settings
+- Provides seamless VM restart functionality
+
+#### 6. List Mode (NEW)
 - Discovers running VMs by scanning socket files
 - Queries VM configuration via API
 - Displays comprehensive table with VM information
@@ -257,8 +299,11 @@ The Firecracker VM Manager is a Python script with a bash wrapper (`fcm`) that a
 ### Actions
 - `create`: Create and start a new VM
 - `destroy`: Stop and destroy an existing VM
+- `stop`: Stop a VM without removing TAP devices (NEW)
+- `start`: Start a previously created VM from cached configuration (NEW)
+- `restart`: Restart a VM by stopping and then starting it (NEW)
 - `list`: List all running VMs with configuration details
-- `kernels`: List available kernel files from KERNEL_PATH directory (NEW)
+- `kernels`: List available kernel files from KERNEL_PATH directory
 
 ### Primary Usage
 All commands are executed through the `fcm` wrapper script:
@@ -266,7 +311,10 @@ All commands are executed through the `fcm` wrapper script:
 ./fcm kernels                                    # List available kernels
 ./fcm create --name myvm --kernel vmlinux-6.1.141 --rootfs disk.ext4 ...
 ./fcm list                                       # List running VMs
-./fcm destroy --name myvm                        # Destroy VM
+./fcm stop --name myvm                           # Stop VM (preserves TAP devices and cache)
+./fcm start --name myvm                          # Start VM from cache
+./fcm restart --name myvm                        # Restart VM (stop + start)
+./fcm destroy --name myvm                        # Destroy VM (complete cleanup)
 ```
 
 ### Parameters
@@ -688,22 +736,26 @@ If the GitHub links become unavailable, you can:
 ## Project Status Summary
 
 ### Recently Implemented Features (Latest Session)
-1. **Kernels Action**: New command to list available kernel files from KERNEL_PATH directory
-2. **Simplified Kernel Resolution**: --kernel parameter takes filename, KERNEL_PATH is always a directory
-3. **FCM Wrapper Script**: Bash wrapper that auto-manages Python virtual environment and dependencies
-4. **TAP Device Auto-Generation**: Complete system for automatic TAP device discovery and assignment
-5. **Socket Path Configuration**: SOCKET_PATH_PREFIX environment variable for configurable socket directories
-6. **VM Listing and Monitoring**: Comprehensive list command with API querying and table display
-7. **Enhanced Network Management**: TAP device IP resolution and display
-8. **Session-Based Conflict Prevention**: Tracks allocated devices within script execution
-9. **Validation System**: Checks for existing devices when explicitly specified
-10. **Always-On MMDS**: All VMs now get MMDS with network configuration and hostname
-11. **Hostname Parameter**: New --hostname parameter automatically injected into MMDS network_config
+1. **VM Configuration Caching System**: Complete caching system for stop/start functionality
+2. **Stop Action**: New command to stop VMs while preserving TAP devices and configuration
+3. **Start Action**: New command to restart VMs from cached configuration
+4. **Restart Action**: New command that combines stop and start operations for seamless VM restart
+5. **Cache Directory Management**: Auto-creates `cache/` directory for VM configuration storage
+6. **Configuration Persistence**: JSON-based storage of complete VM settings
+7. **Socket Cleanup**: Stop action removes socket files to ensure clean restart
+8. **Enhanced Debugging**: Improved Firecracker startup detection with comprehensive error reporting
+9. **Kernels Action**: Command to list available kernel files from KERNEL_PATH directory
+10. **FCM Wrapper Script**: Bash wrapper that auto-manages Python virtual environment and dependencies
+11. **TAP Device Auto-Generation**: Complete system for automatic TAP device discovery and assignment
+12. **Socket Path Configuration**: SOCKET_PATH_PREFIX environment variable for configurable socket directories
+13. **VM Listing and Monitoring**: Comprehensive list command with API querying and table display
+14. **Always-On MMDS**: All VMs now get MMDS with network configuration and hostname
 
 ### Current Capabilities
 - **Zero-Setup Execution**: `fcm` wrapper handles all environment and dependency management
 - **Kernel Management**: List available kernels and use filenames instead of full paths
-- **Full VM Lifecycle**: Create, destroy, and list VMs
+- **Complete VM Lifecycle**: Create, stop, start, restart, destroy, and list VMs
+- **Configuration Persistence**: Automatic caching enables stop/start without losing settings
 - **Automatic Network Setup**: TAP device auto-generation and configuration
 - **Production Ready**: Supervisor integration with configurable paths
 - **Development Friendly**: Foreground mode for debugging

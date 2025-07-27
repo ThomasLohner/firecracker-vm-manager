@@ -57,7 +57,7 @@ Before using this script, ensure you have:
 
 ## Usage
 
-The script supports four main actions: **create**, **destroy**, **list** VMs, and **kernels** (list available kernels).
+The script supports seven main actions: **create**, **destroy**, **stop**, **start**, **restart**, **list** VMs, and **kernels** (list available kernels).
 
 ### Create a VM (Simplest Form)
 
@@ -110,11 +110,37 @@ This will automatically generate TAP devices (tap0 for main interface, tap1 for 
 ./fcm list
 ```
 
+### Stop a VM
+
+```bash
+./fcm stop --name myvm
+```
+
+This stops the VM process but preserves TAP devices and cached configuration for restart.
+
+### Start a VM
+
+```bash
+./fcm start --name myvm
+```
+
+This restarts a previously created VM using its cached configuration.
+
+### Restart a VM
+
+```bash
+./fcm restart --name myvm
+```
+
+This combines stop and start operations: stops the VM process, removes the socket file, then restarts the VM from cached configuration.
+
 ### Destroy a VM
 
 ```bash
 ./fcm destroy --name myvm
 ```
+
+This completely removes the VM, TAP devices, configuration cache, and all resources.
 
 ### Get Help
 
@@ -214,6 +240,46 @@ KERNEL_PATH=/path/to/kernels
 
 # Use specific kernel by filename
 ./fcm create --name vm1 --kernel vmlinux-6.1.141 --rootfs disk.ext4 --tap-ip 192.168.1.1 --vm-ip 10.0.1.1
+```
+
+## VM Configuration Caching
+
+The script automatically caches VM configurations to enable stop/start functionality without losing settings.
+
+### Cache Features
+
+- **Automatic caching**: VM configuration is saved to `cache/<vm_name>.json` after successful creation
+- **Complete configuration**: Stores kernel, rootfs, TAP devices, IPs, CPU/memory settings, and hostname
+- **Persistent across restarts**: Configuration survives system reboots and script restarts
+- **Stop/Start workflow**: Enables stopping VMs without losing configuration for later restart
+
+### Cache Directory
+
+- **Location**: `cache/` directory in the same location as the script
+- **Auto-creation**: Directory is created automatically when the script starts
+- **File format**: JSON files named `<vm_name>.json` containing all VM settings
+
+### Stop/Start Workflow
+
+1. **Create VM**: `./fcm create --name myvm ...` → VM config automatically cached
+2. **Stop VM**: `./fcm stop --name myvm` → Stops process, keeps TAP devices and cache
+3. **Start VM**: `./fcm start --name myvm` → Reads cache, recreates VM with same settings
+
+### Cache File Example
+
+```json
+{
+  "kernel": "/path/to/vmlinux-6.1.141",
+  "rootfs": "/path/to/rootfs.ext4",
+  "tap_device": "tap0",
+  "mmds_tap": "tap1",
+  "vm_ip": "10.0.1.1",
+  "tap_ip": "192.168.1.1",
+  "cpus": 2,
+  "memory": 512,
+  "hostname": "myvm",
+  "created_at": 1642234567.123
+}
 ```
 
 ## TAP Device Auto-Generation
@@ -442,10 +508,55 @@ vm2     | 10.4.17.2   | 2    | 512 MiB | ubuntu.ext4     | vmlinux         | tap
    ./fcm list
    ```
 
-6. **Destroy VMs:**
+6. **Stop/Start/Restart VMs (preserves configuration):**
+   ```bash
+   # Stop VMs without removing TAP devices or cache
+   ./fcm stop --name vm1
+   ./fcm stop --name vm2
+   
+   # Start VMs from cached configuration
+   ./fcm start --name vm1
+   ./fcm start --name vm2
+   
+   # Or restart VMs in one command (stop + start)
+   ./fcm restart --name vm1
+   ./fcm restart --name vm2
+   ```
+
+7. **Destroy VMs (complete cleanup):**
    ```bash
    ./fcm destroy --name vm1
    ./fcm destroy --name vm2
+   ```
+
+### Stop/Start Workflow Example
+
+1. **Create a VM:**
+   ```bash
+   ./fcm create \
+     --name webserver \
+     --hostname web-prod \
+     --kernel vmlinux-6.1.141 \
+     --rootfs nginx.ext4 \
+     --tap-ip 192.168.1.10 \
+     --vm-ip 10.0.1.10 \
+     --cpus 2 \
+     --memory 1024
+   ```
+
+2. **Stop the VM (preserves TAP devices and cache):**
+   ```bash
+   ./fcm stop --name webserver
+   # Output: ✓ VM webserver stopped successfully
+   #         ✓ Socket file removed: /var/run/firecracker/webserver.sock
+   ```
+
+3. **Start the VM (uses cached configuration):**
+   ```bash
+   ./fcm start --name webserver
+   # Output: ✓ VM configuration loaded from cache: cache/webserver.json
+   #         ✓ Firecracker process started for VM webserver
+   #         ✓ VM webserver started successfully from cached configuration!
    ```
 
 ### Creating VMs in Foreground Mode (for debugging)
@@ -516,6 +627,7 @@ The script performs these operations in sequence:
 11. **Set network interfaces** - Links host TAP devices to guest eth0 and mmds0
 12. **Configure MMDS** - Sets up metadata service with network configuration
 13. **Start microVM** - Initiates the virtual machine
+14. **Cache configuration** - Saves all VM settings to `cache/<vm_name>.json` for stop/start functionality
 
 ### DESTROY Action
 
@@ -526,6 +638,37 @@ The script performs these cleanup operations:
 3. **Remove TAP devices** - Deletes both main and MMDS TAP interfaces (routes automatically removed)
 4. **Remove supervisor config** - Deletes supervisord configuration file
 5. **Reload supervisor** - Updates supervisor to stop managing the VM process
+
+**Note:** The destroy action currently does not remove the configuration cache automatically. You may need to manually remove `cache/<vm_name>.json` if desired.
+
+### STOP Action
+
+The script performs these operations to stop a VM while preserving configuration:
+
+1. **Stop Firecracker process** - Uses `supervisorctl stop <vm_name>` to stop the VM
+2. **Remove socket file** - Cleans up API socket to allow clean restart
+3. **Preserve TAP devices** - Keeps network interfaces for reuse
+4. **Preserve configuration cache** - Keeps cached settings for restart
+
+### START Action
+
+The script performs these operations to restart a VM from cache:
+
+1. **Load cached configuration** - Reads VM settings from `cache/<vm_name>.json`
+2. **Validate configuration** - Ensures all required settings are present
+3. **Start Firecracker process** - Uses `supervisorctl start <vm_name>` to launch Firecracker
+4. **Wait for readiness** - Confirms Firecracker is listening on socket
+5. **Configure VM** - Applies all cached settings via API
+6. **Start microVM** - Initiates the virtual machine with restored configuration
+
+### RESTART Action
+
+The script performs these operations to restart a VM:
+
+1. **Execute stop operation** - Calls the STOP action to stop the VM while preserving TAP devices and cache
+2. **Wait for cleanup** - Brief pause to ensure clean shutdown
+3. **Execute start operation** - Calls the START action to restart the VM from cached configuration
+4. **Verify success** - Confirms both stop and start operations completed successfully
 
 ### LIST Action
 

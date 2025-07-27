@@ -6,6 +6,7 @@ import requests
 import requests_unixsocket
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 def load_env_config():
@@ -74,6 +75,10 @@ class FirecrackerVMManager:
         self.session = requests_unixsocket.Session()
         self.base_url = f"http+unix://{self.socket_path.replace('/', '%2F')}"
         self.allocated_tap_devices = set()  # Track devices allocated in this session
+        self.cache_dir = Path("cache")  # Cache directory for VM configurations
+        
+        # Ensure cache directory exists
+        self._ensure_cache_directory()
     
     def _run_command(self, cmd, check=True, capture_output=True, text=True):
         """Helper method to run subprocess commands with consistent error handling"""
@@ -455,6 +460,80 @@ class FirecrackerVMManager:
             pass
         return None
 
+    def _ensure_cache_directory(self):
+        """Create cache directory if it doesn't exist"""
+        try:
+            self.cache_dir.mkdir(exist_ok=True)
+            return True
+        except Exception as e:
+            print(f"Error creating cache directory: {e}", file=sys.stderr)
+            return False
+
+    def _get_cache_file_path(self, vm_name):
+        """Get the cache file path for a VM"""
+        return self.cache_dir / f"{vm_name}.json"
+
+    def save_vm_config(self, vm_name, kernel_path, rootfs_path, tap_device, mmds_tap, vm_ip, tap_ip, cpus, memory, hostname):
+        """Save VM configuration to cache file"""
+        if not self._ensure_cache_directory():
+            return False
+        
+        cache_data = {
+            "kernel": kernel_path,
+            "rootfs": rootfs_path,
+            "tap_device": tap_device,
+            "mmds_tap": mmds_tap,
+            "vm_ip": vm_ip,
+            "tap_ip": tap_ip,
+            "cpus": cpus,
+            "memory": memory,
+            "hostname": hostname,
+            "created_at": time.time()
+        }
+        
+        cache_file = self._get_cache_file_path(vm_name)
+        try:
+            with open(cache_file, 'w') as f:
+                json.dump(cache_data, f, indent=2)
+            print(f"✓ VM configuration cached: {cache_file}")
+            return True
+        except Exception as e:
+            print(f"Error saving VM config to cache: {e}", file=sys.stderr)
+            return False
+
+    def load_vm_config(self, vm_name):
+        """Load VM configuration from cache file"""
+        cache_file = self._get_cache_file_path(vm_name)
+        
+        if not cache_file.exists():
+            print(f"Error: No cached configuration found for VM '{vm_name}'", file=sys.stderr)
+            print(f"Cache file expected at: {cache_file}", file=sys.stderr)
+            return None
+        
+        try:
+            with open(cache_file, 'r') as f:
+                cache_data = json.load(f)
+            print(f"✓ VM configuration loaded from cache: {cache_file}")
+            return cache_data
+        except Exception as e:
+            print(f"Error loading VM config from cache: {e}", file=sys.stderr)
+            return None
+
+    def remove_vm_config_cache(self, vm_name):
+        """Remove VM configuration from cache"""
+        cache_file = self._get_cache_file_path(vm_name)
+        
+        try:
+            if cache_file.exists():
+                cache_file.unlink()
+                print(f"✓ VM configuration cache removed: {cache_file}")
+            else:
+                print(f"✓ VM configuration cache doesn't exist: {cache_file}")
+            return True
+        except Exception as e:
+            print(f"Error removing VM config cache: {e}", file=sys.stderr)
+            return False
+
     def _make_request(self, method, endpoint, data=None):
         """Make HTTP request to Firecracker API"""
         url = f"{self.base_url}{endpoint}"
@@ -667,7 +746,7 @@ autostart=true
         }
         return self._make_request("PUT", "/actions", data)
 
-    def create_vm(self, vm_name, kernel_path, rootfs_path, tap_device, tap_ip, vm_ip, cpus, memory, metadata=None, mmds_tap=None, foreground=False):
+    def create_vm(self, vm_name, kernel_path, rootfs_path, tap_device, tap_ip, vm_ip, cpus, memory, metadata=None, mmds_tap=None, foreground=False, hostname=None):
         """Create and start a new VM"""
         print(f"Creating VM: {vm_name}...")
         
@@ -682,10 +761,18 @@ autostart=true
             print(f"Removing stale socket file: {self.socket_path}")
             socket_file.unlink()
         
+        success = False
         if foreground:
-            return self.create_vm_foreground(vm_name, kernel_path, rootfs_path, tap_device, tap_ip, vm_ip, cpus, memory, metadata, mmds_tap)
+            success = self.create_vm_foreground(vm_name, kernel_path, rootfs_path, tap_device, tap_ip, vm_ip, cpus, memory, metadata, mmds_tap)
         else:
-            return self.create_vm_supervisor(vm_name, kernel_path, rootfs_path, tap_device, tap_ip, vm_ip, cpus, memory, metadata, mmds_tap)
+            success = self.create_vm_supervisor(vm_name, kernel_path, rootfs_path, tap_device, tap_ip, vm_ip, cpus, memory, metadata, mmds_tap)
+        
+        # Save VM configuration to cache if creation was successful
+        if success:
+            if not self.save_vm_config(vm_name, kernel_path, rootfs_path, tap_device, mmds_tap, vm_ip, tap_ip, cpus, memory, hostname or vm_name):
+                print("Warning: Failed to save VM configuration to cache", file=sys.stderr)
+        
+        return success
     
     def create_vm_supervisor(self, vm_name, kernel_path, rootfs_path, tap_device, tap_ip, vm_ip, cpus, memory, metadata, mmds_tap):
         """Create VM using supervisor"""
@@ -697,9 +784,86 @@ autostart=true
         if not self.supervisor_reload():
             return False
         
-        # Wait a moment for Firecracker to start
-        import time
-        time.sleep(1)
+        # Wait for Firecracker to be ready with retries
+        max_retries = 10
+        retry_delay = 1
+        
+        print("Waiting for Firecracker to start...")
+        for attempt in range(max_retries):
+            time.sleep(retry_delay)
+            
+            # Check if socket file exists
+            socket_file = Path(self.socket_path)
+            if not socket_file.exists():
+                print(f"Attempt {attempt + 1}/{max_retries}: Socket file not yet created")
+                continue
+            
+            # Check if Firecracker is listening
+            if self.check_socket_in_use():
+                print(f"✓ Firecracker is ready (attempt {attempt + 1})")
+                break
+            else:
+                print(f"Attempt {attempt + 1}/{max_retries}: Firecracker not yet listening")
+        else:
+            print("Error: Firecracker failed to start within timeout period", file=sys.stderr)
+            
+            # Check supervisor status for debugging
+            try:
+                result = self._run_command(["sudo", "supervisorctl", "status", vm_name], check=False)
+                print(f"Supervisor status: {result.stdout.strip()}", file=sys.stderr)
+                if result.stderr.strip():
+                    print(f"Supervisor stderr: {result.stderr.strip()}", file=sys.stderr)
+            except Exception as e:
+                print(f"Could not check supervisor status: {e}", file=sys.stderr)
+            
+            # Check Firecracker logs for debugging
+            log_files = [f"/var/log/{vm_name}.log", f"/var/log/{vm_name}.error.log"]
+            for log_file in log_files:
+                try:
+                    result = self._run_command(["sudo", "tail", "-20", log_file], check=False)
+                    if result.returncode == 0 and result.stdout.strip():
+                        print(f"\n--- Last 20 lines of {log_file} ---", file=sys.stderr)
+                        print(result.stdout, file=sys.stderr)
+                    elif result.returncode != 0:
+                        print(f"Could not read {log_file}: {result.stderr.strip()}", file=sys.stderr)
+                except Exception as e:
+                    print(f"Error reading {log_file}: {e}", file=sys.stderr)
+            
+            # Check if socket directory exists and has proper permissions
+            socket_dir = Path(self.socket_path).parent
+            print(f"\nSocket debugging:", file=sys.stderr)
+            print(f"Expected socket path: {self.socket_path}", file=sys.stderr)
+            print(f"Socket directory: {socket_dir}", file=sys.stderr)
+            print(f"Socket directory exists: {socket_dir.exists()}", file=sys.stderr)
+            
+            if socket_dir.exists():
+                try:
+                    stat_result = self._run_command(["ls", "-la", str(socket_dir)], check=False)
+                    print(f"Socket directory contents:\n{stat_result.stdout}", file=sys.stderr)
+                except Exception as e:
+                    print(f"Could not list socket directory: {e}", file=sys.stderr)
+            
+            # Check if Firecracker binary exists and is executable
+            try:
+                firecracker_result = self._run_command(["which", "firecracker"], check=False)
+                if firecracker_result.returncode == 0:
+                    firecracker_path = firecracker_result.stdout.strip()
+                    print(f"Firecracker binary found at: {firecracker_path}", file=sys.stderr)
+                    
+                    # Check if it's executable
+                    exec_result = self._run_command(["test", "-x", firecracker_path], check=False)
+                    print(f"Firecracker executable: {exec_result.returncode == 0}", file=sys.stderr)
+                else:
+                    print("Firecracker binary not found in PATH", file=sys.stderr)
+                    
+                # Also check the specific path we're using
+                specific_path_result = self._run_command(["test", "-x", "/usr/sbin/firecracker"], check=False)
+                print(f"/usr/sbin/firecracker exists and is executable: {specific_path_result.returncode == 0}", file=sys.stderr)
+                
+            except Exception as e:
+                print(f"Error checking Firecracker binary: {e}", file=sys.stderr)
+            
+            return False
         
         # Now configure the VM
         return self.configure_and_start(kernel_path, rootfs_path, tap_device, tap_ip, vm_ip, cpus, memory, metadata, mmds_tap)
@@ -807,6 +971,130 @@ autostart=true
         print(f"✓ VM {vm_name} destroyed successfully!")
         return True
 
+    def stop_vm(self, vm_name):
+        """Stop a VM without removing TAP devices"""
+        print(f"Stopping VM: {vm_name}...")
+        
+        try:
+            # Stop the VM via supervisor
+            result = self._run_command(["sudo", "supervisorctl", "stop", vm_name], check=False)
+            
+            if result.returncode == 0:
+                print(f"✓ VM {vm_name} stopped successfully")
+                
+                # Remove socket file to allow clean restart
+                socket_file = Path(self.socket_path)
+                if socket_file.exists():
+                    socket_file.unlink()
+                    print(f"✓ Socket file removed: {self.socket_path}")
+                else:
+                    print(f"✓ Socket file doesn't exist: {self.socket_path}")
+                
+                return True
+            else:
+                print(f"Error: Failed to stop VM {vm_name}", file=sys.stderr)
+                print(f"supervisorctl output: {result.stderr}", file=sys.stderr)
+                return False
+                
+        except Exception as e:
+            print(f"Error stopping VM: {e}", file=sys.stderr)
+            return False
+
+    def start_vm(self, vm_name):
+        """Start a VM from cached configuration"""
+        print(f"Starting VM: {vm_name}...")
+        
+        # Load VM configuration from cache
+        cache_data = self.load_vm_config(vm_name)
+        if not cache_data:
+            return False
+        
+        # Extract configuration values
+        kernel_path = cache_data.get('kernel')
+        rootfs_path = cache_data.get('rootfs')
+        tap_device = cache_data.get('tap_device')
+        mmds_tap = cache_data.get('mmds_tap')
+        vm_ip = cache_data.get('vm_ip')
+        tap_ip = cache_data.get('tap_ip')
+        cpus = cache_data.get('cpus')
+        memory = cache_data.get('memory')
+        hostname = cache_data.get('hostname', vm_name)
+        
+        # Validate that all required values are present
+        required_fields = ['kernel', 'rootfs', 'tap_device', 'mmds_tap', 'vm_ip', 'tap_ip', 'cpus', 'memory']
+        missing_fields = [field for field in required_fields if not cache_data.get(field)]
+        
+        if missing_fields:
+            print(f"Error: Missing required fields in cached config: {', '.join(missing_fields)}", file=sys.stderr)
+            return False
+        
+        # Check if socket is in use
+        if self.check_socket_in_use():
+            print(f"Error: Socket {self.socket_path} is already in use", file=sys.stderr)
+            return False
+        
+        # If socket file exists but nothing is listening, delete it
+        socket_file = Path(self.socket_path)
+        if socket_file.exists():
+            print(f"Removing stale socket file: {self.socket_path}")
+            socket_file.unlink()
+        
+        # Start Firecracker process via supervisor
+        try:
+            result = self._run_command(["sudo", "supervisorctl", "start", vm_name], check=False)
+            
+            if result.returncode != 0:
+                print(f"Error: Failed to start Firecracker process for VM {vm_name}", file=sys.stderr)
+                print(f"supervisorctl output: {result.stderr}", file=sys.stderr)
+                return False
+            
+            print(f"✓ Firecracker process started for VM {vm_name}")
+            
+        except Exception as e:
+            print(f"Error starting Firecracker process: {e}", file=sys.stderr)
+            return False
+        
+        # Wait a moment for Firecracker to start
+        time.sleep(1)
+        
+        # Create metadata for MMDS
+        metadata = parse_metadata(None, tap_ip, vm_ip, hostname)
+        if metadata is None:
+            print("Error: Failed to create metadata for MMDS", file=sys.stderr)
+            return False
+        
+        # Configure the VM using cached settings
+        success = self.configure_and_start(kernel_path, rootfs_path, tap_device, tap_ip, vm_ip, cpus, memory, metadata, mmds_tap)
+        
+        if success:
+            print(f"✓ VM {vm_name} started successfully from cached configuration!")
+        else:
+            print(f"Error: Failed to configure and start VM {vm_name}", file=sys.stderr)
+        
+        return success
+
+    def restart_vm(self, vm_name):
+        """Restart a VM by stopping and then starting it"""
+        print(f"Restarting VM: {vm_name}...")
+        
+        # First stop the VM
+        print("Step 1: Stopping VM...")
+        if not self.stop_vm(vm_name):
+            print(f"Error: Failed to stop VM {vm_name}", file=sys.stderr)
+            return False
+        
+        # Wait a moment between stop and start
+        time.sleep(1)
+        
+        # Then start the VM
+        print("Step 2: Starting VM...")
+        if not self.start_vm(vm_name):
+            print(f"Error: Failed to start VM {vm_name}", file=sys.stderr)
+            return False
+        
+        print(f"✓ VM {vm_name} restarted successfully!")
+        return True
+
     def configure_and_start(self, kernel_path, rootfs_path, tap_device, tap_ip, vm_ip, cpus, memory, metadata, mmds_tap):
         """Configure all VM settings and start the microVM"""
         print("Configuring Firecracker VM...")
@@ -884,10 +1172,14 @@ USAGE:
 ACTIONS:
     create          Create and start a new VM
     destroy         Destroy an existing VM and clean up resources
+    stop            Stop a VM without removing TAP devices
+    start           Start a previously created VM from cached configuration
+    restart         Restart a VM by stopping and then starting it
     list            List all running VMs with their configuration
+    kernels         List available kernel files from KERNEL_PATH directory
 
 REQUIRED PARAMETERS:
-    --name          Name of the VM (not required for list action)
+    --name          Name of the VM (not required for list and kernels actions)
 
 OPTIONAL PARAMETERS:
     --socket        Path to Firecracker API socket file (default: /tmp/<vm_name>.sock)
@@ -935,8 +1227,20 @@ EXAMPLE USAGE:
     # Destroy a VM with specific device cleanup
     ./firecracker_vm_manager.py destroy --name myvm --tap-device tap0 --mmds-tap tap1
 
+    # Stop a VM without removing TAP devices
+    ./firecracker_vm_manager.py stop --name myvm
+
+    # Start a previously created VM from cached configuration
+    ./firecracker_vm_manager.py start --name myvm
+
+    # Restart a VM (stop then start)
+    ./firecracker_vm_manager.py restart --name myvm
+
     # List all running VMs
     ./firecracker_vm_manager.py list
+    
+    # List available kernels
+    ./firecracker_vm_manager.py kernels
 
 PREREQUISITES:
     - Root/sudo access for network configuration and supervisor management
@@ -949,7 +1253,7 @@ PREREQUISITES:
 
 def main():
     parser = argparse.ArgumentParser(description="Manage Firecracker VMs", add_help=False)
-    parser.add_argument("action", nargs="?", choices=["create", "destroy", "list", "kernels"], help="Action to perform")
+    parser.add_argument("action", nargs="?", choices=["create", "destroy", "stop", "start", "restart", "list", "kernels"], help="Action to perform")
     parser.add_argument("--name", help="Name of the VM")
     parser.add_argument("--socket", help="Path to Firecracker API socket (default: /tmp/<vm_name>.sock)")
     parser.add_argument("--kernel", help="Kernel filename (must exist in KERNEL_PATH directory)")
@@ -976,7 +1280,7 @@ def main():
 
     # Check for basic required parameters (except for list and kernels actions)
     if not args.name and args.action not in ["list", "kernels"]:
-        print("Error: --name is required for create and destroy actions", file=sys.stderr)
+        print("Error: --name is required for create, destroy, stop, start, and restart actions", file=sys.stderr)
         show_help_and_exit()
     
     # Set socket path prefix from .env if available, default to /tmp
@@ -1102,7 +1406,8 @@ def main():
             memory=args.memory,
             metadata=metadata,
             mmds_tap=args.mmds_tap,
-            foreground=args.foreground
+            foreground=args.foreground,
+            hostname=hostname
         )
 
     elif args.action == "destroy":
@@ -1118,6 +1423,18 @@ def main():
             tap_device=args.tap_device,
             mmds_tap=args.mmds_tap
         )
+
+    elif args.action == "stop":
+        # Stop a VM without removing TAP devices
+        success = vm_manager.stop_vm(vm_name=args.name)
+
+    elif args.action == "start":
+        # Start a VM from cached configuration
+        success = vm_manager.start_vm(vm_name=args.name)
+
+    elif args.action == "restart":
+        # Restart a VM (stop then start)
+        success = vm_manager.restart_vm(vm_name=args.name)
 
     elif args.action == "list":
         # List running VMs
