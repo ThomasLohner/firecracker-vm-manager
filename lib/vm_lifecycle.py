@@ -14,12 +14,12 @@ from .config_manager import ConfigManager
 class VMLifecycle:
     """Manages VM create, destroy, start, stop, restart operations"""
     
-    def __init__(self, socket_path, socket_path_prefix='/tmp'):
+    def __init__(self, socket_path, socket_path_prefix='/tmp', config_manager=None):
         self.socket_path = socket_path
         self.socket_path_prefix = socket_path_prefix
         self.api = FirecrackerAPI(socket_path)
         self.network_manager = NetworkManager()
-        self.config_manager = ConfigManager()
+        self.config_manager = config_manager or ConfigManager()
     
     def _run_command(self, cmd, check=True, capture_output=True, text=True):
         """Helper method to run subprocess commands with consistent error handling"""

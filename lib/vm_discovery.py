@@ -9,9 +9,9 @@ from .network_manager import NetworkManager
 class VMDiscovery:
     """Manages VM discovery, state detection, and table formatting"""
     
-    def __init__(self, socket_path_prefix='/tmp'):
+    def __init__(self, socket_path_prefix='/tmp', config_manager=None):
         self.socket_path_prefix = socket_path_prefix
-        self.config_manager = ConfigManager()
+        self.config_manager = config_manager or ConfigManager()
         self.network_manager = NetworkManager()
     
     def discover_all_vms(self):

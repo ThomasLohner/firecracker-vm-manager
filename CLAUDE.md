@@ -46,7 +46,7 @@
 | `lib/config_manager.py` | Environment config and VM caching |
 | `lib/vm_discovery.py` | VM discovery and state monitoring |
 | `lib/vm_lifecycle.py` | VM lifecycle operations |
-| `.env` | Global configuration (KERNEL_PATH, IMAGES_PATH, ROOTFS_PATH, etc.) |
+| `.env` | Configuration file with directory paths and defaults |
 | `firecracker_vm_manager.md` | User documentation |
 
 ### Modular Architecture Overview
@@ -99,8 +99,8 @@ firecracker_vm_manager.py (CLI)
 ### Key Architecture Components
 
 #### VM Configuration Caching
-- Auto-creates `cache/` directory for VM configurations
-- JSON storage: `cache/<vm_name>.json` with complete VM state
+- Auto-creates `/var/lib/firecracker/cache/` directory for VM configurations
+- JSON storage: `/var/lib/firecracker/cache/<vm_name>.json` with complete VM state
 - Enables stop/start workflow without losing configuration
 - Stores: kernel, rootfs, TAP devices, IPs, CPU/memory, hostname, base_image, timestamp
 
@@ -127,15 +127,104 @@ firecracker_vm_manager.py (CLI)
 ### Environment Variables
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `KERNEL_PATH` | Kernel files directory | Required |
+| `KERNEL_PATH` | Kernel files directory | `/var/lib/firecracker/kernels` |
 | `KERNEL` | Default kernel filename | Optional |
-| `IMAGES_PATH` | Base image files | `./images` |
-| `ROOTFS_PATH` | VM-specific rootfs files | `./rootfs` |
+| `IMAGES_PATH` | Base image files | `/var/lib/firecracker/images` |
+| `ROOTFS_PATH` | VM-specific rootfs files | `/var/lib/firecracker/rootfs` |
 | `SOCKET_PATH_PREFIX` | Socket file directory | `/tmp` |
 | `CPUS` | Default vCPUs | Required |
 | `MEMORY` | Default memory (MiB) | Required |
 | `IMAGE` | Default image file | Optional |
 | `ROOTFS_SIZE` | Default rootfs size | Optional |
+
+**Note**: Cache directory is automatically set to `/var/lib/firecracker/cache` and is not configurable via environment variables.
+
+**Directory Auto-Creation**: All required directories (`/var/lib/firecracker/kernels`, `/var/lib/firecracker/images`, `/var/lib/firecracker/rootfs`, `/var/lib/firecracker/cache`) are automatically created if they don't exist. Requires appropriate filesystem permissions.
+
+## Configuration Management
+
+### .env File Structure
+The `.env` file provides default configuration values. All settings can be overridden by command-line arguments.
+
+```bash
+# Firecracker VM Manager Configuration
+# Command line arguments will override these values.
+
+# Path to the kernel image files directory
+# Default: /var/lib/firecracker/kernels (if not specified)
+KERNEL_PATH=/var/lib/firecracker/kernels
+
+# Default kernel filename (can be overridden with --kernel)
+KERNEL=
+
+# Path to image files directory (images are copied to create rootfs)
+# Default: /var/lib/firecracker/images (if not specified)
+IMAGES_PATH=/var/lib/firecracker/images
+
+# Path to rootfs files directory (where built rootfs files are stored)
+# Default: /var/lib/firecracker/rootfs (if not specified)
+ROOTFS_PATH=/var/lib/firecracker/rootfs
+
+# VM configuration cache directory is automatically set to:
+# /var/lib/firecracker/cache (not configurable via .env)
+
+# Default image file name (can be overridden with --image)
+IMAGE=
+
+# Default rootfs size (can be overridden with --rootfs-size)
+ROOTFS_SIZE=1G
+
+# Configure custom socket directory
+SOCKET_PATH_PREFIX=/tmp
+
+# Optional: Default resource settings
+CPUS=1
+MEMORY=1024
+```
+
+### Directory Structure Overview
+```
+/var/lib/firecracker/           # Base directory (auto-created)
+├── kernels/                    # Kernel files (auto-created)
+├── images/                     # Base image templates (auto-created)
+├── rootfs/                     # VM-specific rootfs files (auto-created)
+└── cache/                      # VM configuration cache (auto-created)
+```
+
+### Configuration Precedence
+1. **Command-line arguments** (highest priority)
+2. **Environment variables** from `.env` file
+3. **Built-in defaults** (lowest priority)
+
+### Custom Directory Configuration
+To use different directories, modify `.env`:
+```bash
+# Example: Use local directories for development
+KERNEL_PATH=./dev/kernels
+IMAGES_PATH=./dev/images
+ROOTFS_PATH=./dev/rootfs
+SOCKET_PATH_PREFIX=./dev/sockets
+```
+
+### Migration from Legacy Paths
+For users upgrading from older versions with local directories:
+
+**Option 1: Keep legacy paths (modify `.env`)**:
+```bash
+KERNEL_PATH=./vmlinux
+IMAGES_PATH=./images  
+ROOTFS_PATH=./rootfs
+```
+
+**Option 2: Migrate to standard paths**:
+```bash
+# Move files to new standard locations
+sudo mkdir -p /var/lib/firecracker/{kernels,images,rootfs,cache}
+sudo mv ./vmlinux/* /var/lib/firecracker/kernels/ 2>/dev/null || true
+sudo mv ./images/* /var/lib/firecracker/images/ 2>/dev/null || true
+sudo mv ./rootfs/* /var/lib/firecracker/rootfs/ 2>/dev/null || true
+sudo mv ./cache/* /var/lib/firecracker/cache/ 2>/dev/null || true
+```
 
 ## Firecracker API Integration
 
@@ -167,6 +256,21 @@ network_interfaces = config.get('network-interfaces', [])  # ARRAY - iterate by 
 - Automatic hostname injection from --hostname or VM name
 
 ## Command Line Interface
+
+### Initial Setup
+
+**Directory Structure**: The system automatically creates the required directories:
+```bash
+# Default setup - directories created automatically
+sudo mkdir -p /var/lib/firecracker
+sudo chown $USER:$USER /var/lib/firecracker  # Optional: for non-root usage
+```
+
+**File Placement**:
+- Place kernel files in `/var/lib/firecracker/kernels/`
+- Place base images in `/var/lib/firecracker/images/`
+- VM rootfs files will be created in `/var/lib/firecracker/rootfs/`
+- VM configurations cached in `/var/lib/firecracker/cache/`
 
 ### Usage Patterns
 ```bash
@@ -255,13 +359,14 @@ network_interfaces = config.get('network-interfaces', [])  # ARRAY - iterate by 
 ## Recent Changes Summary
 
 ### Latest Enhancements (2024)
-1. **Modular Architecture Refactoring**: Split monolithic 1735-line script into 6 focused modules in `lib/` directory
-2. **Destroy Action Refactoring**: Cache-based cleanup, confirmation prompts, VM running checks, `--force-destroy` flag
-3. **Base Image Tracking**: VM cache stores original image filename, list command shows provenance
-4. **VM State Monitoring**: List command shows both running and stopped VMs with state detection
-5. **Hostname Support**: Configurable VM hostnames via `--hostname` parameter, auto-injected into MMDS
-6. **Enhanced TAP Management**: Auto-generation with conflict prevention, session tracking
-7. **Configuration Caching**: Complete stop/start workflow with JSON-based VM state persistence
+1. **Standardized Directory Structure**: Default paths moved to `/var/lib/firecracker/` with automatic directory creation
+2. **Modular Architecture Refactoring**: Split monolithic 1735-line script into 6 focused modules in `lib/` directory
+3. **Destroy Action Refactoring**: Cache-based cleanup, confirmation prompts, VM running checks, `--force-destroy` flag
+4. **Base Image Tracking**: VM cache stores original image filename, list command shows provenance
+5. **VM State Monitoring**: List command shows both running and stopped VMs with state detection
+6. **Hostname Support**: Configurable VM hostnames via `--hostname` parameter, auto-injected into MMDS
+7. **Enhanced TAP Management**: Auto-generation with conflict prevention, session tracking
+8. **Configuration Caching**: Complete stop/start workflow with JSON-based VM state persistence
 
 ### Breaking Changes
 - Destroy action requires VM to be stopped first
@@ -269,6 +374,8 @@ network_interfaces = config.get('network-interfaces', [])  # ARRAY - iterate by 
 - Uses cache-based cleanup (VMs created before caching system won't work with new destroy)
 
 ### Non-Breaking Changes
+- **Standardized directories**: Default paths now use `/var/lib/firecracker/` but can be overridden in `.env`
+- **Automatic directory creation**: System creates required directories automatically with appropriate permissions
 - **Modular refactoring**: Internal architecture completely reorganized but all CLI interfaces remain identical
 - **Clean organization**: Implementation moved to `lib/` directory without affecting user experience
 
@@ -316,7 +423,8 @@ autostart=true
 ### Common Issues & Solutions
 - **Socket permission errors**: Check `SOCKET_PATH_PREFIX` directory permissions
 - **TAP device conflicts**: Use auto-generation instead of explicit names
-- **List shows no VMs**: Check socket directory and cache directory
+- **List shows no VMs**: Check socket directory and `/var/lib/firecracker/cache/` directory
+- **Directory permission errors**: System automatically creates `/var/lib/firecracker/` and subdirectories, but requires write permissions. Run with `sudo` or ensure user has access to `/var/lib/firecracker/`
 - **Destroy fails**: Ensure VM is stopped first, use `--force-destroy` if needed
 - **Missing dependencies**: `fcm` wrapper handles Python environment automatically
 

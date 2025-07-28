@@ -9,8 +9,12 @@ from pathlib import Path
 class ConfigManager:
     """Manages environment configuration, VM caching, and metadata parsing"""
     
-    def __init__(self):
-        self.cache_dir = Path("cache")  # Cache directory for VM configurations
+    def __init__(self, cache_dir=None):
+        # Use provided cache_dir or default to /var/lib/firecracker/cache
+        if cache_dir:
+            self.cache_dir = Path(cache_dir)
+        else:
+            self.cache_dir = Path("/var/lib/firecracker/cache")
         self._ensure_cache_directory()
     
     def load_env_config(self):
@@ -73,7 +77,7 @@ class ConfigManager:
     def _ensure_cache_directory(self):
         """Create cache directory if it doesn't exist"""
         try:
-            self.cache_dir.mkdir(exist_ok=True)
+            self.cache_dir.mkdir(parents=True, exist_ok=True)
             return True
         except Exception as e:
             print(f"Error creating cache directory: {e}", file=sys.stderr)

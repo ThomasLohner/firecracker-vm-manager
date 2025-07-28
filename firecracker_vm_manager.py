@@ -136,13 +136,37 @@ def main():
     if args.help or not args.action:
         show_help_and_exit()
 
-    # Initialize managers
-    config_manager = ConfigManager()
+    # Load configuration from .env file first
+    temp_config_manager = ConfigManager()
+    env_config = temp_config_manager.load_env_config()
+    
+    # Set default paths under /var/lib/firecracker if not configured
+    base_path = "/var/lib/firecracker"
+    if 'KERNEL_PATH' not in env_config or not env_config['KERNEL_PATH']:
+        env_config['KERNEL_PATH'] = f"{base_path}/kernels"
+    if 'IMAGES_PATH' not in env_config or not env_config['IMAGES_PATH']:
+        env_config['IMAGES_PATH'] = f"{base_path}/images"
+    if 'ROOTFS_PATH' not in env_config or not env_config['ROOTFS_PATH']:
+        env_config['ROOTFS_PATH'] = f"{base_path}/rootfs"
+    
+    # Ensure all required directories exist
+    required_dirs = [
+        env_config['KERNEL_PATH'],
+        env_config['IMAGES_PATH'], 
+        env_config['ROOTFS_PATH']
+    ]
+    
+    for dir_path in required_dirs:
+        try:
+            Path(dir_path).mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            print(f"Warning: Could not create directory {dir_path}: {e}", file=sys.stderr)
+    
+    # Initialize managers with appropriate cache directory
+    cache_dir = f"{base_path}/cache"
+    config_manager = ConfigManager(cache_dir)
     filesystem_manager = FilesystemManager()
     network_manager = NetworkManager()
-
-    # Load configuration from .env file
-    env_config = config_manager.load_env_config()
 
     # Check for basic required parameters (except for list, kernels, and images actions)
     if not args.name and args.action not in ["list", "kernels", "images"]:
@@ -207,7 +231,7 @@ def main():
 
     elif args.action == "list":
         # List all VMs (both running and stopped)
-        vm_discovery = VMDiscovery(socket_path_prefix)
+        vm_discovery = VMDiscovery(socket_path_prefix, config_manager)
         all_vms = vm_discovery.discover_all_vms()
         vm_discovery.format_vm_table(all_vms)
         return  # No need to check success for list action
@@ -297,7 +321,7 @@ def main():
             sys.exit(1)  # Error message already printed by parse_metadata
 
         # Create VM lifecycle manager and create the VM
-        vm_lifecycle = VMLifecycle(args.socket, socket_path_prefix)
+        vm_lifecycle = VMLifecycle(args.socket, socket_path_prefix, config_manager)
         # Share the network manager instance to preserve allocated TAP devices
         vm_lifecycle.network_manager = network_manager
         
@@ -319,7 +343,7 @@ def main():
 
     elif args.action in ["destroy", "stop", "start", "restart"]:
         # Create VM lifecycle manager for lifecycle operations
-        vm_lifecycle = VMLifecycle(args.socket, socket_path_prefix)
+        vm_lifecycle = VMLifecycle(args.socket, socket_path_prefix, config_manager)
         
         if args.action == "destroy":
             success = vm_lifecycle.destroy_vm(
