@@ -131,7 +131,7 @@ firecracker_vm_manager.py (CLI)
 | `KERNEL` | Default kernel filename | Optional |
 | `IMAGES_PATH` | Base image files | `/var/lib/firecracker/images` |
 | `ROOTFS_PATH` | VM-specific rootfs files | `/var/lib/firecracker/rootfs` |
-| `SOCKET_PATH_PREFIX` | Socket file directory | `/tmp` |
+| `SOCKET_PATH_PREFIX` | Socket file directory | `/var/run/firecracker` |
 | `CPUS` | Default vCPUs | Required |
 | `MEMORY` | Default memory (MiB) | Required |
 | `IMAGE` | Default image file | Optional |
@@ -143,8 +143,8 @@ firecracker_vm_manager.py (CLI)
 
 ## Configuration Management
 
-### .env File Structure
-The `.env` file provides default configuration values. All settings can be overridden by command-line arguments.
+### Configuration File Structure
+The configuration file (default: `/etc/firecracker.env`) provides default configuration values. All settings can be overridden by command-line arguments. The config file location can be overridden with `--config` parameter.
 
 ```bash
 # Firecracker VM Manager Configuration
@@ -166,7 +166,7 @@ IMAGES_PATH=/var/lib/firecracker/images
 ROOTFS_PATH=/var/lib/firecracker/rootfs
 
 # VM configuration cache directory is automatically set to:
-# /var/lib/firecracker/cache (not configurable via .env)
+# /var/lib/firecracker/cache (not configurable via config file)
 
 # Default image file name (can be overridden with --image)
 IMAGE=
@@ -175,7 +175,7 @@ IMAGE=
 ROOTFS_SIZE=1G
 
 # Configure custom socket directory
-SOCKET_PATH_PREFIX=/tmp
+SOCKET_PATH_PREFIX=/var/run/firecracker
 
 # Optional: Default resource settings
 CPUS=1
@@ -193,11 +193,11 @@ MEMORY=1024
 
 ### Configuration Precedence
 1. **Command-line arguments** (highest priority)
-2. **Environment variables** from `.env` file
+2. **Configuration file** (default `/etc/firecracker.env` or specified with `--config`)
 3. **Built-in defaults** (lowest priority)
 
 ### Custom Directory Configuration
-To use different directories, modify `.env`:
+To use different directories, modify the config file (default `/etc/firecracker.env`) or specify a custom config file with `--config`:
 ```bash
 # Example: Use local directories for development
 KERNEL_PATH=./dev/kernels
@@ -209,7 +209,7 @@ SOCKET_PATH_PREFIX=./dev/sockets
 ### Migration from Legacy Paths
 For users upgrading from older versions with local directories:
 
-**Option 1: Keep legacy paths (modify `.env`)**:
+**Option 1: Keep legacy paths (modify config file)**:
 ```bash
 KERNEL_PATH=./vmlinux
 IMAGES_PATH=./images  

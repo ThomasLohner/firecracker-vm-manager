@@ -33,12 +33,13 @@ REQUIRED PARAMETERS:
     --name          Name of the VM (not required for list, kernels, and images actions)
 
 OPTIONAL PARAMETERS:
-    --socket        Path to Firecracker API socket file (default: /tmp/<vm_name>.sock)
+    --socket        Path to Firecracker API socket file (default: /var/run/firecracker/<vm_name>.sock)
+    --config        Path to configuration file (default: /etc/firecracker.env)
 
 REQUIRED FOR CREATE ACTION:
-    --kernel        Kernel filename (must exist in KERNEL_PATH directory, can be set in .env as KERNEL)
-    --image         Image filename (must exist in IMAGES_PATH directory)
-    --rootfs-size   Size to resize rootfs to (e.g., 1G, 512M, 2048M)
+    --kernel        Kernel filename (must exist in KERNEL_PATH directory, can be set in config as KERNEL)
+    --image         Image filename (must exist in IMAGES_PATH directory, can be set in config as IMAGE)
+    --rootfs-size   Size to resize rootfs to (e.g., 1G, 512M, 2048M, can be set in config as ROOTFS_SIZE)
     --tap-ip        IP address for TAP device on host
     --vm-ip         IP address for VM (guest)
 
@@ -51,8 +52,8 @@ OPTIONAL FOR DESTROY ACTION:
     --mmds-tap      MMDS TAP device name to remove (required if VM was created with metadata)
 
 OPTIONAL PARAMETERS (CREATE ONLY):
-    --cpus          Number of vCPUs (can be set in .env as CPUS)
-    --memory        Memory in MiB (can be set in .env as MEMORY)
+    --cpus          Number of vCPUs (can be set in config as CPUS)
+    --memory        Memory in MiB (can be set in config as MEMORY)
     --hostname      Hostname for the VM (defaults to VM name if not specified)
     --foreground    Run Firecracker in foreground for debugging (skips supervisor)
     --force-rootfs  Force overwrite existing rootfs file if it exists
@@ -64,7 +65,7 @@ EXAMPLE USAGE:
     ./firecracker_vm_manager.py kernels
 
     # Create a VM with auto-generated TAP device (simplest form)
-    ./firecracker_vm_manager.py create --name myvm --kernel vmlinux-6.1.141 --image alpine.ext4 --rootfs-size 1G --tap-ip 172.16.0.1 --vm-ip 172.16.0.2
+    ./firecracker_vm_manager.py create --name myvm --tap-ip 172.16.0.1 --vm-ip 172.16.0.2
 
     # Create a VM with specific TAP device
     ./firecracker_vm_manager.py create --name myvm --kernel vmlinux-6.1.141 --image alpine.ext4 --rootfs-size 1G --tap-device tap5 --tap-ip 172.16.0.1 --vm-ip 172.16.0.2
@@ -113,12 +114,12 @@ def main():
     parser = argparse.ArgumentParser(description="Manage Firecracker VMs", add_help=False)
     parser.add_argument("action", nargs="?", choices=["create", "destroy", "stop", "start", "restart", "list", "kernels", "images"], help="Action to perform")
     parser.add_argument("--name", help="Name of the VM")
-    parser.add_argument("--socket", help="Path to Firecracker API socket (default: /tmp/<vm_name>.sock)")
-    parser.add_argument("--kernel", help="Kernel filename (must exist in KERNEL_PATH directory, can be set in .env as KERNEL)")
-    parser.add_argument("--image", help="Image filename (must exist in IMAGES_PATH directory, can be set in .env as IMAGE)")
-    parser.add_argument("--rootfs-size", help="Size to resize rootfs to (can be set in .env as ROOTFS_SIZE)")
-    parser.add_argument("--cpus", type=int, help="Number of vCPUs (can be set in .env as CPUS)")
-    parser.add_argument("--memory", type=int, help="Memory in MiB (can be set in .env as MEMORY)")
+    parser.add_argument("--socket", help="Path to Firecracker API socket (default: /var/run/firecracker/<vm_name>.sock)")
+    parser.add_argument("--kernel", help="Kernel filename (must exist in KERNEL_PATH directory, can be set in config as KERNEL)")
+    parser.add_argument("--image", help="Image filename (must exist in IMAGES_PATH directory, can be set in config as IMAGE)")
+    parser.add_argument("--rootfs-size", help="Size to resize rootfs to (can be set in config as ROOTFS_SIZE)")
+    parser.add_argument("--cpus", type=int, help="Number of vCPUs (can be set in config as CPUS)")
+    parser.add_argument("--memory", type=int, help="Memory in MiB (can be set in config as MEMORY)")
     parser.add_argument("--tap-device", help="TAP device name on host")
     parser.add_argument("--tap-ip", help="IP address for TAP device on host")
     parser.add_argument("--vm-ip", help="IP address for VM (guest)")
@@ -128,6 +129,7 @@ def main():
     parser.add_argument("--foreground", action="store_true", help="Run Firecracker in foreground for debugging")
     parser.add_argument("--force-rootfs", action="store_true", help="Force overwrite existing rootfs file if it exists")
     parser.add_argument("--force-destroy", action="store_true", help="Force destroy without confirmation prompt")
+    parser.add_argument("--config", help="Path to configuration file (default: /etc/firecracker.env)")
     parser.add_argument("--help", "-h", action="store_true", help="Show help message")
 
     args = parser.parse_args()
@@ -136,8 +138,8 @@ def main():
     if args.help or not args.action:
         show_help_and_exit()
 
-    # Load configuration from .env file first
-    temp_config_manager = ConfigManager()
+    # Load configuration from config file first
+    temp_config_manager = ConfigManager(config_file=args.config)
     env_config = temp_config_manager.load_env_config()
     
     # Set default paths under /var/lib/firecracker if not configured
@@ -162,9 +164,9 @@ def main():
         except Exception as e:
             print(f"Warning: Could not create directory {dir_path}: {e}", file=sys.stderr)
     
-    # Initialize managers with appropriate cache directory
+    # Initialize managers with appropriate cache directory and config file
     cache_dir = f"{base_path}/cache"
-    config_manager = ConfigManager(cache_dir)
+    config_manager = ConfigManager(cache_dir, args.config)
     filesystem_manager = FilesystemManager()
     network_manager = NetworkManager()
 
@@ -173,8 +175,8 @@ def main():
         print("Error: --name is required for create, destroy, stop, start, and restart actions", file=sys.stderr)
         show_help_and_exit()
     
-    # Set socket path prefix from .env if available, default to /tmp
-    socket_path_prefix = env_config.get('SOCKET_PATH_PREFIX', '/tmp')
+    # Set socket path prefix from config if available, default to /var/run/firecracker
+    socket_path_prefix = env_config.get('SOCKET_PATH_PREFIX', '/var/run/firecracker')
     
     # Create socket directory if it doesn't exist
     socket_dir = Path(socket_path_prefix)
@@ -189,31 +191,31 @@ def main():
     if not args.socket and args.action not in ["list", "kernels", "images"]:
         args.socket = str(Path(socket_path_prefix) / f"{args.name}.sock")
     
-    # Set kernel from .env if not provided via command line
+    # Set kernel from config if not provided via command line
     if not args.kernel and 'KERNEL' in env_config and env_config['KERNEL']:
         args.kernel = env_config['KERNEL']
     
-    # Set image from .env if not provided via command line
+    # Set image from config if not provided via command line
     if not args.image and 'IMAGE' in env_config and env_config['IMAGE']:
         args.image = env_config['IMAGE']
     
-    # Set rootfs size from .env if not provided via command line
+    # Set rootfs size from config if not provided via command line
     if not args.rootfs_size and 'ROOTFS_SIZE' in env_config:
         args.rootfs_size = env_config['ROOTFS_SIZE']
     
-    # Set CPU count from .env if available
+    # Set CPU count from config if available
     if not args.cpus and 'CPUS' in env_config:
         try:
             args.cpus = int(env_config['CPUS'])
         except ValueError:
-            print(f"Warning: Invalid CPUS value in .env file: {env_config['CPUS']}", file=sys.stderr)
+            print(f"Warning: Invalid CPUS value in config file: {env_config['CPUS']}", file=sys.stderr)
     
-    # Set memory from .env if available
+    # Set memory from config if available
     if not args.memory and 'MEMORY' in env_config:
         try:
             args.memory = int(env_config['MEMORY'])
         except ValueError:
-            print(f"Warning: Invalid MEMORY value in .env file: {env_config['MEMORY']}", file=sys.stderr)
+            print(f"Warning: Invalid MEMORY value in config file: {env_config['MEMORY']}", file=sys.stderr)
 
     if args.action == "kernels":
         # List available kernels
@@ -265,7 +267,7 @@ def main():
                 env_hints.append("MEMORY=<mb>")
             
             if env_hints:
-                error_msg += f"\nNote: These can be set in .env file: {', '.join(env_hints)}"
+                error_msg += f"\nNote: These can be set in config file: {', '.join(env_hints)}"
             
             print(error_msg, file=sys.stderr)
             show_help_and_exit()

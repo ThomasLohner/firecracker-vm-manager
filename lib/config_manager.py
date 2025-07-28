@@ -9,31 +9,40 @@ from pathlib import Path
 class ConfigManager:
     """Manages environment configuration, VM caching, and metadata parsing"""
     
-    def __init__(self, cache_dir=None):
+    def __init__(self, cache_dir=None, config_file=None):
         # Use provided cache_dir or default to /var/lib/firecracker/cache
         if cache_dir:
             self.cache_dir = Path(cache_dir)
         else:
             self.cache_dir = Path("/var/lib/firecracker/cache")
+        
+        # Use provided config_file or default to /etc/firecracker.env
+        if config_file:
+            self.config_file = Path(config_file)
+        else:
+            self.config_file = Path("/etc/firecracker.env")
+        
         self._ensure_cache_directory()
     
     def load_env_config(self):
-        """Load configuration from .env file"""
+        """Load configuration from config file"""
         config = {}
-        env_file = Path(".env")
         
-        if env_file.exists():
+        if self.config_file.exists():
             try:
-                with open(env_file, 'r') as f:
+                with open(self.config_file, 'r') as f:
                     for line in f:
                         line = line.strip()
                         # Skip comments and empty lines
                         if line and not line.startswith('#'):
                             if '=' in line:
                                 key, value = line.split('=', 1)
+                                # Strip inline comments (everything after #)
+                                if '#' in value:
+                                    value = value.split('#')[0]
                                 config[key.strip()] = value.strip()
             except Exception as e:
-                print(f"Warning: Could not read .env file: {e}", file=sys.stderr)
+                print(f"Warning: Could not read config file {self.config_file}: {e}", file=sys.stderr)
         
         return config
     

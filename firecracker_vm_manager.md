@@ -38,12 +38,15 @@ The `fcm` wrapper handles all Python dependencies automatically. Just place kern
 
 For non-root usage: `sudo chown -R $USER:$USER /var/lib/firecracker`
 
-### Configuration (.env file - optional)
+### Configuration File (optional)
+Default location: `/etc/firecracker.env` (override with `--config` parameter)
+
 ```bash
-KERNEL_PATH=/var/lib/firecracker/kernels  # Kernel files
+KERNEL_PATH=/var/lib/firecracker/kernels  # Kernel files directory
+KERNEL=vmlinux-6.1.141                    # Default kernel filename
 IMAGES_PATH=/var/lib/firecracker/images   # Base image templates
+IMAGE=alpine.ext4                         # Default image filename
 ROOTFS_PATH=/var/lib/firecracker/rootfs   # VM-specific rootfs files
-IMAGE=alpine.ext4                         # Default image
 ROOTFS_SIZE=1G                            # Default rootfs size
 CPUS=1                                    # Default CPU count
 MEMORY=1024                               # Default memory (MiB)
@@ -80,8 +83,8 @@ See main [README.md](README.md) for detailed instructions on:
 ./fcm restart --name myvm   # Stop + start
 
 # Destroy VM (permanent deletion)
-./fcm destroy --name myvm              # With confirmation
-./fcm destroy --name myvm --force-destroy    # Skip confirmation
+./fcm destroy --name myvm                   # With confirmation
+./fcm destroy --name myvm --force-destroy   # Skip confirmation
 ```
 
 ### Help
@@ -95,15 +98,16 @@ See main [README.md](README.md) for detailed instructions on:
 - `--name`: VM identifier
 
 ### Required (CREATE)
-- `--kernel`: Kernel filename (in KERNEL_PATH, or set IMAGE in .env)
-- `--image`: Image filename (in IMAGES_PATH, or set IMAGE in .env)
-- `--rootfs-size`: Rootfs size (1G, 512M, etc., or set ROOTFS_SIZE in .env)
-- `--cpus`: vCPUs (or set CPUS in .env)
-- `--memory`: Memory in MiB (or set MEMORY in .env)
+- `--kernel`: Kernel filename (in KERNEL_PATH, or set KERNEL in config)
+- `--image`: Image filename (in IMAGES_PATH, or set IMAGE in config)
+- `--rootfs-size`: Rootfs size (1G, 512M, etc., or set ROOTFS_SIZE in config)
+- `--cpus`: vCPUs (or set CPUS in config)
+- `--memory`: Memory in MiB (or set MEMORY in config)
 - `--tap-ip`: Host TAP device IP
 - `--vm-ip`: VM guest IP
 
 ### Optional
+- `--config`: Configuration file path (default: /etc/firecracker.env)
 - `--tap-device`, `--mmds-tap`: Explicit TAP devices (auto-generated if omitted)
 - `--hostname`: VM hostname (defaults to VM name)
 - `--metadata`: JSON metadata string or @file
@@ -115,7 +119,7 @@ See main [README.md](README.md) for detailed instructions on:
 
 ### Configuration Priority
 1. Command line arguments (highest)
-2. `.env` file values
+2. Configuration file values (default: /etc/firecracker.env)
 3. Built-in defaults (lowest)
 
 ### Image-Based Rootfs Building
@@ -186,7 +190,7 @@ Use `--foreground` for debugging (shows direct Firecracker output, Ctrl+C cleanu
 ### Common Issues
 - **Permission denied**: Run with sudo or ensure proper directory permissions
 - **TAP device conflicts**: Use auto-generation instead of explicit device names
-- **File not found**: Verify kernel/image file paths and `.env` configuration
+- **File not found**: Verify kernel/image file paths and configuration file settings
 - **No VMs found**: Check socket directory and VM status
 
 ### Logs
