@@ -37,21 +37,64 @@
 | File | Purpose |
 |------|---------|
 | `fcm` | Bash wrapper with auto Python environment setup |
-| `firecracker_vm_manager.py` | Core Python script for VM operations |
+| `firecracker_vm_manager.py` | Main CLI interface and module integration |
+| `lib/` | Modular implementation directory |
+| `lib/__init__.py` | Package interface with exported classes |
+| `lib/firecracker_api.py` | Core Firecracker API client |
+| `lib/network_manager.py` | TAP device management and networking |
+| `lib/filesystem_manager.py` | Rootfs building and file operations |
+| `lib/config_manager.py` | Environment config and VM caching |
+| `lib/vm_discovery.py` | VM discovery and state monitoring |
+| `lib/vm_lifecycle.py` | VM lifecycle operations |
 | `.env` | Global configuration (KERNEL_PATH, IMAGES_PATH, ROOTFS_PATH, etc.) |
 | `firecracker_vm_manager.md` | User documentation |
 
+### Modular Architecture Overview
+The system is organized into focused modules with single responsibilities:
+
+- **API Layer**: `FirecrackerAPI` handles all HTTP communication with Firecracker
+- **Network Layer**: `NetworkManager` manages TAP devices, IP configuration, routing
+- **Storage Layer**: `FilesystemManager` handles rootfs building, image/kernel management  
+- **Configuration Layer**: `ConfigManager` manages environment config, VM caching, metadata
+- **Discovery Layer**: `VMDiscovery` handles VM state detection and monitoring
+- **Lifecycle Layer**: `VMLifecycle` orchestrates VM create/destroy/start/stop operations
+- **CLI Layer**: Main script coordinates all modules and provides user interface
+
 ### Core Operations
-| Action | Function | Description |
-|--------|----------|-------------|
-| `create` | `create_vm()` | Build rootfs from image, configure, start VM |
-| `destroy` | `destroy_vm()` | Stop VM, confirm, cleanup all resources |
-| `stop` | `stop_vm()` | Stop VM, preserve TAP devices and cache |
-| `start` | `start_vm()` | Restart VM from cached configuration |
-| `restart` | `restart_vm()` | Stop + start sequence |
-| `list` | `discover_all_vms()` | Show all VMs (running/stopped) with details |
-| `images` | `list_available_images()` | List base images from IMAGES_PATH |
-| `kernels` | List kernel files from KERNEL_PATH |
+| Action | Module | Function | Description |
+|--------|--------|----------|-------------|
+| `create` | `VMLifecycle` | `create_vm()` | Build rootfs from image, configure, start VM |
+| `destroy` | `VMLifecycle` | `destroy_vm()` | Stop VM, confirm, cleanup all resources |
+| `stop` | `VMLifecycle` | `stop_vm()` | Stop VM, preserve TAP devices and cache |
+| `start` | `VMLifecycle` | `start_vm()` | Restart VM from cached configuration |
+| `restart` | `VMLifecycle` | `restart_vm()` | Stop + start sequence |
+| `list` | `VMDiscovery` | `discover_all_vms()` | Show all VMs (running/stopped) with details |
+| `images` | `FilesystemManager` | `list_available_images()` | List base images from IMAGES_PATH |
+| `kernels` | `FilesystemManager` | `list_available_kernels()` | List kernel files from KERNEL_PATH |
+
+### Module Dependencies and Integration
+```
+firecracker_vm_manager.py (CLI)
+├── lib.config_manager (ConfigManager)
+├── lib.filesystem_manager (FilesystemManager) 
+├── lib.network_manager (NetworkManager)
+├── lib.vm_discovery (VMDiscovery)
+│   ├── lib.firecracker_api (FirecrackerAPI)
+│   ├── lib.config_manager (ConfigManager)
+│   └── lib.network_manager (NetworkManager)
+└── lib.vm_lifecycle (VMLifecycle)
+    ├── lib.firecracker_api (FirecrackerAPI)
+    ├── lib.network_manager (NetworkManager)
+    └── lib.config_manager (ConfigManager)
+```
+
+### Modular Design Benefits
+- **Single Responsibility**: Each module has one focused purpose
+- **Testability**: Individual components can be unit tested independently
+- **Maintainability**: Changes to networking don't affect filesystem operations
+- **Reusability**: Components can be used independently or in other projects
+- **Clean Organization**: Implementation details organized in `lib/` subdirectory
+- **Debugging**: Easier to isolate issues to specific functional areas
 
 ### Key Architecture Components
 
@@ -162,17 +205,41 @@ network_interfaces = config.get('network-interfaces', [])  # ARRAY - iterate by 
 3. Remember: `drives` and `network-interfaces` are ARRAYS in API responses
 
 ### Code Patterns
-- Single `FirecrackerVMManager` class design
-- Idempotent operations where possible
-- Comprehensive error handling with graceful fallbacks
-- Session state tracking for TAP device allocation
-- Cache-first approach for configuration persistence
+- **Modular class-based design**: Each module contains a focused class (`FirecrackerAPI`, `NetworkManager`, etc.)
+- **Single responsibility principle**: Each module handles one aspect of VM management
+- **Dependency injection**: Main CLI creates manager instances and shares them between modules
+- **Idempotent operations**: Operations can be safely repeated without side effects
+- **Comprehensive error handling**: Each module provides graceful error handling with detailed messages
+- **Session state tracking**: `NetworkManager` tracks allocated TAP devices across operations
+- **Cache-first approach**: `ConfigManager` handles all VM configuration persistence
+- **Clean imports**: Use relative imports within `lib/` package, absolute imports from CLI
 
 ### Testing Approach
 - Test with actual Firecracker binaries
 - Validate TAP auto-generation and network configuration
 - Test VM discovery across running/stopped states
 - Verify supervisor integration and cleanup scenarios
+- Test individual modules in isolation for unit testing
+- Verify module integration through CLI commands
+
+### Working with Modular Architecture
+**Adding New Features**:
+1. Identify which module should contain the new functionality
+2. Add methods to the appropriate class (`FirecrackerAPI`, `NetworkManager`, etc.)
+3. Update the CLI layer to use the new functionality
+4. Test the feature through the CLI interface
+
+**Modifying Existing Features**:
+1. Locate the relevant module using the operation mapping table above
+2. Make changes within the focused module
+3. Ensure module interfaces remain compatible
+4. Test through both unit tests and CLI integration
+
+**Module Communication**:
+- Main CLI creates all manager instances and passes them between modules
+- `VMLifecycle` and `VMDiscovery` coordinate multiple managers
+- Shared state (like allocated TAP devices) is managed through instance sharing
+- No direct inter-module communication - all coordination through main CLI
 
 ### Dependencies
 **Auto-managed by `fcm` wrapper**:
@@ -188,17 +255,22 @@ network_interfaces = config.get('network-interfaces', [])  # ARRAY - iterate by 
 ## Recent Changes Summary
 
 ### Latest Enhancements (2024)
-1. **Destroy Action Refactoring**: Cache-based cleanup, confirmation prompts, VM running checks, `--force-destroy` flag
-2. **Base Image Tracking**: VM cache stores original image filename, list command shows provenance
-3. **VM State Monitoring**: List command shows both running and stopped VMs with state detection
-4. **Hostname Support**: Configurable VM hostnames via `--hostname` parameter, auto-injected into MMDS
-5. **Enhanced TAP Management**: Auto-generation with conflict prevention, session tracking
-6. **Configuration Caching**: Complete stop/start workflow with JSON-based VM state persistence
+1. **Modular Architecture Refactoring**: Split monolithic 1735-line script into 6 focused modules in `lib/` directory
+2. **Destroy Action Refactoring**: Cache-based cleanup, confirmation prompts, VM running checks, `--force-destroy` flag
+3. **Base Image Tracking**: VM cache stores original image filename, list command shows provenance
+4. **VM State Monitoring**: List command shows both running and stopped VMs with state detection
+5. **Hostname Support**: Configurable VM hostnames via `--hostname` parameter, auto-injected into MMDS
+6. **Enhanced TAP Management**: Auto-generation with conflict prevention, session tracking
+7. **Configuration Caching**: Complete stop/start workflow with JSON-based VM state persistence
 
 ### Breaking Changes
 - Destroy action requires VM to be stopped first
 - Destroy action signature changed (no longer needs explicit TAP device parameters)
 - Uses cache-based cleanup (VMs created before caching system won't work with new destroy)
+
+### Non-Breaking Changes
+- **Modular refactoring**: Internal architecture completely reorganized but all CLI interfaces remain identical
+- **Clean organization**: Implementation moved to `lib/` directory without affecting user experience
 
 ### Backward Compatibility
 - All existing create/list functionality preserved
