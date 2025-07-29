@@ -1,22 +1,44 @@
 # Firecracker VM Manager
 
-Manages Firecracker microVMs with automatic image-based rootfs building, network configuration, and TAP device auto-generation.
+A complete tool for managing Firecracker microVMs with automatic image-based rootfs building, network configuration, and TAP device auto-generation.
+
+## Installation
+
+Download the latest `fcm` binary from the [releases page](https://github.com/your-repo/firecracker-vm-manager/releases) and place it in your PATH:
+
+```bash
+# Download and install fcm binary
+curl -L -o fcm https://github.com/your-repo/firecracker-vm-manager/releases/latest/download/fcm
+chmod +x fcm
+sudo mv fcm /usr/local/bin/
+```
+
+### Development Version
+
+For development purposes, you can use the `fcm.sh` script directly from the source repository. This script handles Python virtual environment and dependencies automatically:
+
+```bash
+# Clone the repository and use fcm.sh for development
+git clone https://github.com/your-repo/firecracker-vm-manager.git
+cd firecracker-vm-manager
+./fcm.sh create --name myvm --kernel vmlinux-6.1.141 --image alpine.ext4 --rootfs-size 1G --tap-ip 172.16.0.1 --vm-ip 172.16.0.2
+```
 
 ## Quick Start
 
-The `fcm` wrapper handles all Python dependencies automatically. Just place kernel files in `/var/lib/firecracker/kernels/` and base images in `/var/lib/firecracker/images/`, then:
+Just place kernel files in `/var/lib/firecracker/kernels/` and base images in `/var/lib/firecracker/images/`, then:
 
 ```bash
 # Basic VM creation
-./fcm create --name myvm --kernel vmlinux-6.1.141 --image alpine.ext4 --rootfs-size 1G --tap-ip 172.16.0.1 --vm-ip 172.16.0.2
+fcm create --name myvm --kernel vmlinux-6.1.141 --image alpine.ext4 --rootfs-size 1G --tap-ip 172.16.0.1 --vm-ip 172.16.0.2
 
 # List VMs
-./fcm list
+fcm list
 
 # VM lifecycle
-./fcm stop --name myvm
-./fcm start --name myvm
-./fcm destroy --name myvm
+fcm stop --name myvm
+fcm start --name myvm
+fcm destroy --name myvm
 ```
 
 ## Setup
@@ -62,34 +84,34 @@ See main [README.md](README.md) for detailed instructions on:
 
 ### List Available Resources
 ```bash
-./fcm kernels    # List kernel files
-./fcm images     # List image files
+fcm kernels    # List kernel files
+fcm images     # List image files
 ```
 
 ### Basic Operations
 ```bash
 # Create VM with auto-generated TAP devices
-./fcm create --name myvm --kernel vmlinux-6.1.141 --image alpine.ext4 --rootfs-size 1G --tap-ip 172.16.0.1 --vm-ip 172.16.0.2
+fcm create --name myvm --kernel vmlinux-6.1.141 --image alpine.ext4 --rootfs-size 1G --tap-ip 172.16.0.1 --vm-ip 172.16.0.2
 
 # With specific TAP devices
-./fcm create --name myvm --tap-device tap5 --mmds-tap tap6 --kernel vmlinux-6.1.141 --image alpine.ext4 --rootfs-size 1G --tap-ip 172.16.0.1 --vm-ip 172.16.0.2
+fcm create --name myvm --tap-device tap5 --mmds-tap tap6 --kernel vmlinux-6.1.141 --image alpine.ext4 --rootfs-size 1G --tap-ip 172.16.0.1 --vm-ip 172.16.0.2
 
 # List VMs (running and stopped)
-./fcm list
+fcm list
 
 # VM lifecycle (preserves configuration)
-./fcm stop --name myvm      # Stops VM, keeps TAP/cache
-./fcm start --name myvm     # Restarts from cache
-./fcm restart --name myvm   # Stop + start
+fcm stop --name myvm      # Stops VM, keeps TAP/cache
+fcm start --name myvm     # Restarts from cache
+fcm restart --name myvm   # Stop + start
 
 # Destroy VM (permanent deletion)
-./fcm destroy --name myvm                   # With confirmation
-./fcm destroy --name myvm --force-destroy   # Skip confirmation
+fcm destroy --name myvm                   # With confirmation
+fcm destroy --name myvm --force-destroy   # Skip confirmation
 ```
 
 ### Help
 ```bash
-./fcm --help
+fcm --help
 ```
 
 ## Parameters
@@ -149,13 +171,13 @@ See main [README.md](README.md) for detailed instructions on:
 ### Custom Metadata Example
 ```bash
 # With custom metadata and hostname
-./fcm create --name myvm --hostname web-server --image alpine.ext4 --rootfs-size 1G \
+fcm create --name myvm --hostname web-server --image alpine.ext4 --rootfs-size 1G \
   --tap-ip 172.16.0.1 --vm-ip 172.16.0.2 \
   --metadata '{"app": {"name": "web-server", "version": "1.2.3"}}'
 
 # From file
 echo '{"app": {"name": "web-server"}}' > metadata.json
-./fcm create --name myvm --image alpine.ext4 --rootfs-size 1G \
+fcm create --name myvm --image alpine.ext4 --rootfs-size 1G \
   --tap-ip 172.16.0.1 --vm-ip 172.16.0.2 --metadata @metadata.json
 ```
 
@@ -181,7 +203,7 @@ vm2     | 10.4.17.2   | 2    | 512 MiB | ubuntu.ext4| vmlinux    | tap4 (192.168
 ### Debug Mode
 Use `--foreground` for debugging (shows direct Firecracker output, Ctrl+C cleanup):
 ```bash
-./fcm create --name myvm --kernel vmlinux --image alpine.ext4 --rootfs-size 1G \
+fcm create --name myvm --kernel vmlinux --image alpine.ext4 --rootfs-size 1G \
   --tap-ip 172.16.0.1 --vm-ip 172.16.0.2 --foreground
 ```
 

@@ -36,7 +36,7 @@
 ### Key Files
 | File | Purpose |
 |------|---------|
-| `fcm` | Bash wrapper with auto Python environment setup |
+| `fcm.sh` | Development bash wrapper with auto Python environment setup |
 | `firecracker_vm_manager.py` | Main CLI interface and module integration |
 | `lib/` | Modular implementation directory |
 | `lib/__init__.py` | Package interface with exported classes |
@@ -273,14 +273,27 @@ sudo chown $USER:$USER /var/lib/firecracker  # Optional: for non-root usage
 - VM configurations cached in `/var/lib/firecracker/cache/`
 
 ### Usage Patterns
+
+**Production (binary):**
 ```bash
-./fcm images                                     # List available images
-./fcm kernels                                    # List available kernels
-./fcm create --name vm1 --kernel vmlinux --image alpine.ext4 --rootfs-size 1G --tap-ip 192.168.1.1 --vm-ip 10.0.1.1
-./fcm list                                       # Show all VMs with state
-./fcm stop --name vm1                           # Stop (preserve config)
-./fcm start --name vm1                          # Start from cache
-./fcm destroy --name vm1                        # Destroy (with confirmation)
+fcm images                                       # List available images
+fcm kernels                                      # List available kernels
+fcm create --name vm1 --kernel vmlinux --image alpine.ext4 --rootfs-size 1G --tap-ip 192.168.1.1 --vm-ip 10.0.1.1
+fcm list                                         # Show all VMs with state
+fcm stop --name vm1                             # Stop (preserve config)
+fcm start --name vm1                            # Start from cache
+fcm destroy --name vm1                          # Destroy (with confirmation)
+```
+
+**Development (fcm.sh):**
+```bash
+./fcm.sh images                                  # List available images
+./fcm.sh kernels                                 # List available kernels
+./fcm.sh create --name vm1 --kernel vmlinux --image alpine.ext4 --rootfs-size 1G --tap-ip 192.168.1.1 --vm-ip 10.0.1.1
+./fcm.sh list                                    # Show all VMs with state
+./fcm.sh stop --name vm1                        # Stop (preserve config)
+./fcm.sh start --name vm1                       # Start from cache
+./fcm.sh destroy --name vm1                     # Destroy (with confirmation)
 ```
 
 ### Required Parameters (Create)
@@ -346,9 +359,11 @@ sudo chown $USER:$USER /var/lib/firecracker  # Optional: for non-root usage
 - No direct inter-module communication - all coordination through main CLI
 
 ### Dependencies
-**Auto-managed by `fcm` wrapper**:
+**Auto-managed by `fcm.sh` development wrapper**:
 - Python virtual environment in `venv/`
 - `requests`, `requests-unixsocket` packages
+
+**Production binary**: Self-contained, no external dependencies
 
 **System Requirements**:
 - Firecracker binary: `/usr/sbin/firecracker`
@@ -359,14 +374,15 @@ sudo chown $USER:$USER /var/lib/firecracker  # Optional: for non-root usage
 ## Recent Changes Summary
 
 ### Latest Enhancements (2024)
-1. **Standardized Directory Structure**: Default paths moved to `/var/lib/firecracker/` with automatic directory creation
-2. **Modular Architecture Refactoring**: Split monolithic 1735-line script into 6 focused modules in `lib/` directory
-3. **Destroy Action Refactoring**: Cache-based cleanup, confirmation prompts, VM running checks, `--force-destroy` flag
-4. **Base Image Tracking**: VM cache stores original image filename, list command shows provenance
-5. **VM State Monitoring**: List command shows both running and stopped VMs with state detection
-6. **Hostname Support**: Configurable VM hostnames via `--hostname` parameter, auto-injected into MMDS
-7. **Enhanced TAP Management**: Auto-generation with conflict prevention, session tracking
-8. **Configuration Caching**: Complete stop/start workflow with JSON-based VM state persistence
+1. **Binary Distribution**: Production-ready `fcm` binary available from releases page, `fcm.sh` for development
+2. **Standardized Directory Structure**: Default paths moved to `/var/lib/firecracker/` with automatic directory creation
+3. **Modular Architecture Refactoring**: Split monolithic 1735-line script into 6 focused modules in `lib/` directory
+4. **Destroy Action Refactoring**: Cache-based cleanup, confirmation prompts, VM running checks, `--force-destroy` flag
+5. **Base Image Tracking**: VM cache stores original image filename, list command shows provenance
+6. **VM State Monitoring**: List command shows both running and stopped VMs with state detection
+7. **Hostname Support**: Configurable VM hostnames via `--hostname` parameter, auto-injected into MMDS
+8. **Enhanced TAP Management**: Auto-generation with conflict prevention, session tracking
+9. **Configuration Caching**: Complete stop/start workflow with JSON-based VM state persistence
 
 ### Breaking Changes
 - Destroy action requires VM to be stopped first
@@ -426,6 +442,7 @@ autostart=true
 - **List shows no VMs**: Check socket directory and `/var/lib/firecracker/cache/` directory
 - **Directory permission errors**: System automatically creates `/var/lib/firecracker/` and subdirectories, but requires write permissions. Run with `sudo` or ensure user has access to `/var/lib/firecracker/`
 - **Destroy fails**: Ensure VM is stopped first, use `--force-destroy` if needed
-- **Missing dependencies**: `fcm` wrapper handles Python environment automatically
+- **Missing dependencies (development)**: `fcm.sh` wrapper handles Python environment automatically
+- **Binary not found**: Download from releases page and ensure it's in PATH
 
 This document provides complete context for future development while maintaining all critical information in a significantly more compact format.
