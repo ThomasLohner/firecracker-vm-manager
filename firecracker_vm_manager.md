@@ -4,13 +4,13 @@ A complete tool for managing Firecracker microVMs with automatic image-based roo
 
 ## Installation
 
-Download the latest `fcm` binary from the [releases page](https://github.com/your-repo/firecracker-vm-manager/releases) and place it in your PATH:
+Download the latest `fcm` binary from the [releases page]https://github.com/ThomasLohner/firecracker-vm-manager/releases/) and place it in your PATH:
 
 ```bash
 # Download and install fcm binary
-curl -L -o fcm https://github.com/your-repo/firecracker-vm-manager/releases/latest/download/fcm
-chmod +x fcm
-sudo mv fcm /usr/local/bin/
+curl -L -o fcm https://github.com/ThomasLohner/firecracker-vm-manager/releases/download/v1.0.0/fcm-v1.0.0-x86.tgz
+tar xfz fcm-v1.0.0-x86.tgz
+sudo mv fcm-v1.0.0 /usr/local/bin/fcm
 ```
 
 ### Development Version
