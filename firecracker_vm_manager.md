@@ -1,10 +1,10 @@
 # Firecracker VM Manager
 
-A complete tool for managing Firecracker microVMs with automatic image-based rootfs building, network configuration, and TAP device auto-generation.
+A complete tool for managing [Firecracker microVMs](https://firecracker-microvm.github.io) with automatic image-based rootfs building, network configuration, and TAP device auto-generation.
 
 ## Installation
 
-Download the latest `fcm` binary from the [releases page]https://github.com/ThomasLohner/firecracker-vm-manager/releases/) and place it in your PATH:
+Download the latest `fcm` binary from the [releases page](https://github.com/ThomasLohner/firecracker-vm-manager/releases/) and place it in your PATH:
 
 ```bash
 # Download and install fcm binary
@@ -23,6 +23,33 @@ git clone https://github.com/ThomasLohner/firecracker-vm-manager.git
 cd firecracker-vm-manager
 ./fcm.sh create --name myvm --kernel vmlinux-6.1.141 --image alpine.ext4 --rootfs-size 1G --tap-ip 172.16.0.1 --vm-ip 172.16.0.2
 ```
+
+### Binary release for easy distribution
+The [releases](https://github.com/ThomasLohner/firecracker-vm-manager/releases/) include a `fcm` binary build on Ubuntu 24.04 for easy distribution. You can build your own version with a single comand using tools like [Nuitka](https://nuitka.net):
+```bash
+git clone https://github.com/ThomasLohner/firecracker-vm-manager.git
+cd firecracker-vm-manager
+pip3 install nuitka
+nuitka --onefile firecracker-vm-manager.py
+```
+
+## Why Python?
+
+Firecracker VM Manager is written in Python for three key reasons:
+
+1. **Learning Journey**: This tool started as an exploration project to understand how Firecracker works internally. Python's
+interactive development and clear syntax made it perfect for experimenting with the API and understanding VM lifecycle
+management.
+
+2. **Easy Binary Distribution**: Python's ecosystem ([PyInstaller](https://pyinstaller.org/en/stable/), [Nuitka](https://nuitka.net)) makes it trivial to create self-contained binaries
+for distribution, eliminating dependency management for end users while keeping development simple.
+
+3. **Rapid Development & Maintenance**: Python's readable syntax and rich standard library enabled rapid prototyping and
+iterative development, while the modular architecture ensures long-term maintainability as the tool evolved from a learning
+experiment to production ready management system.
+
+The result is a robust, maintainable tool that feels natural for both development and production use, with the flexibility
+  to evolve alongside Firecracker's API changes.
 
 ## Quick Start
 
