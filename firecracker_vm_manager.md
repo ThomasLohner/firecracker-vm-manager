@@ -33,7 +33,7 @@ pip3 install nuitka
 nuitka --onefile firecracker-vm-manager.py
 ```
 
-## Why Python?
+### Why Python?
 
 Firecracker VM Manager is written in Python for three key reasons:
 
