@@ -141,8 +141,12 @@ class NetworkManager:
         except (subprocess.CalledProcessError, Exception):
             return 'N/A'
     
-    def setup_mmds_tap_device(self, mmds_tap):
+    def setup_mmds_tap_device(self, mmds_tap, networkdriver="internal"):
         """Create MMDS TAP device on host (no IP configuration needed)"""
+        if networkdriver == "external":
+            print(f"✓ External network mode: Skipping MMDS TAP device setup for {mmds_tap}")
+            return True
+            
         try:
             # Check if MMDS TAP device already exists
             if not self._setup_device_common(mmds_tap):
@@ -160,8 +164,12 @@ class NetworkManager:
             print(f"Error setting up MMDS TAP device: {e}", file=sys.stderr)
             return False
     
-    def setup_tap_device(self, tap_device, tap_ip, vm_ip):
+    def setup_tap_device(self, tap_device, tap_ip, vm_ip, networkdriver="internal"):
         """Create and configure TAP device on host"""
+        if networkdriver == "external":
+            print(f"✓ External network mode: Skipping TAP device setup for {tap_device}")
+            return True
+            
         try:
             # Check if TAP device already exists
             if not self._setup_device_common(tap_device):
@@ -201,8 +209,12 @@ class NetworkManager:
             print(f"Error setting up TAP device: {e}", file=sys.stderr)
             return False
     
-    def remove_tap_device(self, tap_device):
+    def remove_tap_device(self, tap_device, networkdriver="internal"):
         """Remove TAP device (routes are automatically removed)"""
+        if networkdriver == "external":
+            print(f"✓ External network mode: Skipping TAP device removal for {tap_device}")
+            return True
+            
         try:
             # Check if TAP device exists
             if self._setup_device_common(tap_device):
@@ -217,3 +229,48 @@ class NetworkManager:
         except (subprocess.CalledProcessError, Exception) as e:
             print(f"Error removing TAP device: {e}", file=sys.stderr)
             return False
+    
+    def validate_external_network_setup(self, tap_device, tap_ip, mmds_tap, vm_ip):
+        """Validate external network setup - check if TAP devices exist, IPs assigned, routes exist"""
+        print(f"Validating external network setup...")
+        
+        # Check if main TAP device exists
+        if not self._setup_device_common(tap_device):
+            print(f"Error: TAP device '{tap_device}' does not exist", file=sys.stderr)
+            return False
+        print(f"✓ TAP device '{tap_device}' exists")
+        
+        # Check if MMDS TAP device exists
+        if not self._setup_device_common(mmds_tap):
+            print(f"Error: MMDS TAP device '{mmds_tap}' does not exist", file=sys.stderr)
+            return False
+        print(f"✓ MMDS TAP device '{mmds_tap}' exists")
+        
+        # Check if TAP device has the expected IP assigned
+        actual_tap_ip = self.get_tap_device_ip(tap_device)
+        if actual_tap_ip == 'N/A' or actual_tap_ip != tap_ip:
+            print(f"Error: TAP device '{tap_device}' does not have IP '{tap_ip}' assigned (found: '{actual_tap_ip}')", file=sys.stderr)
+            return False
+        print(f"✓ TAP device '{tap_device}' has IP '{tap_ip}' assigned")
+        
+        # Check if route exists for VM IP via TAP device
+        try:
+            route_result = self._run_command(["ip", "route", "show", f"{vm_ip}/32"])
+            if not route_result.stdout.strip():
+                print(f"Error: No route found for VM IP '{vm_ip}' via TAP device '{tap_device}'", file=sys.stderr)
+                return False
+            
+            # Verify the route goes through the correct device
+            if tap_device not in route_result.stdout:
+                print(f"Error: Route for VM IP '{vm_ip}' does not go through TAP device '{tap_device}'", file=sys.stderr)
+                print(f"Current route: {route_result.stdout.strip()}", file=sys.stderr)
+                return False
+            
+            print(f"✓ Route for VM IP '{vm_ip}' via TAP device '{tap_device}' exists")
+            
+        except (subprocess.CalledProcessError, Exception) as e:
+            print(f"Error checking route for VM IP '{vm_ip}': {e}", file=sys.stderr)
+            return False
+        
+        print("✓ External network setup validation passed")
+        return True

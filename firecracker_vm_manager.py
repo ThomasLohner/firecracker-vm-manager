@@ -10,11 +10,14 @@ from lib.network_manager import NetworkManager
 from lib.vm_discovery import VMDiscovery
 from lib.vm_lifecycle import VMLifecycle
 
+# Version information
+__version__ = "1.1.0"
+
 
 def show_help_and_exit():
     """Show help message with examples and exit"""
-    help_text = """
-Firecracker VM Manager - Create and destroy Firecracker VMs
+    help_text = f"""
+Firecracker VM Manager v{__version__} - Create and destroy Firecracker VMs
 
 USAGE:
     firecracker_vm_manager.py ACTION --name VM_NAME [OPTIONS]
@@ -58,6 +61,7 @@ OPTIONAL PARAMETERS (CREATE ONLY):
     --foreground    Run Firecracker in foreground for debugging (skips supervisor)
     --force-rootfs  Force overwrite existing rootfs file if it exists
     --help, -h      Show this help message
+    --version, -v   Show version information
 
 EXAMPLE USAGE:
     # List available images and kernels
@@ -113,6 +117,7 @@ PREREQUISITES:
 def main():
     parser = argparse.ArgumentParser(description="Manage Firecracker VMs", add_help=False)
     parser.add_argument("action", nargs="?", choices=["create", "destroy", "stop", "start", "restart", "list", "kernels", "images"], help="Action to perform")
+    parser.add_argument("--version", "-v", action="version", version=f"Firecracker VM Manager {__version__}")
     parser.add_argument("--name", help="Name of the VM")
     parser.add_argument("--socket", help="Path to Firecracker API socket (default: /var/run/firecracker/<vm_name>.sock)")
     parser.add_argument("--kernel", help="Kernel filename (must exist in KERNEL_PATH directory, can be set in config as KERNEL)")
@@ -129,6 +134,7 @@ def main():
     parser.add_argument("--foreground", action="store_true", help="Run Firecracker in foreground for debugging")
     parser.add_argument("--force-rootfs", action="store_true", help="Force overwrite existing rootfs file if it exists")
     parser.add_argument("--force-destroy", action="store_true", help="Force destroy without confirmation prompt")
+    parser.add_argument("--networkdriver", choices=["internal", "external"], default="internal", help="Network driver mode: 'internal' (default) manages TAP devices, 'external' uses existing TAP devices")
     parser.add_argument("--config", help="Path to configuration file (default: /etc/firecracker.env)")
     parser.add_argument("--help", "-h", action="store_true", help="Show help message")
 
@@ -272,12 +278,59 @@ def main():
             print(error_msg, file=sys.stderr)
             show_help_and_exit()
 
+        # Validate external networkdriver requirements
+        if args.networkdriver == "external":
+            external_required = {
+                "tap-device": args.tap_device,
+                "tap-ip": args.tap_ip,
+                "mmds-tap": args.mmds_tap,
+                "vm-ip": args.vm_ip
+            }
+            
+            missing_external_params = [param for param, value in external_required.items() if not value]
+            
+            if missing_external_params:
+                error_msg = f"Error: External network mode requires these parameters: {', '.join(['--' + p for p in missing_external_params])}"
+                print(error_msg, file=sys.stderr)
+                show_help_and_exit()
+
         # Resolve kernel path (support both filenames and full paths)
         resolved_kernel_path = filesystem_manager.resolve_kernel_path(args.kernel, env_config.get('KERNEL_PATH'))
         if not resolved_kernel_path:
             sys.exit(1)  # Error message already printed by resolve_kernel_path
 
-        # Build rootfs from image
+        # Handle TAP device setup and validation based on networkdriver mode
+        # Do this BEFORE creating rootfs to avoid zombie rootfs files
+        if args.networkdriver == "external":
+            # External mode: validate existing TAP devices and network configuration
+            if not network_manager.validate_external_network_setup(args.tap_device, args.tap_ip, args.mmds_tap, args.vm_ip):
+                sys.exit(1)  # Error messages already printed by validate_external_network_setup
+        else:
+            # Internal mode: auto-generate or validate TAP devices
+            if not args.tap_device:
+                args.tap_device = network_manager.find_next_available_tap_device()
+                print(f"Auto-generated TAP device: {args.tap_device}")
+            else:
+                # Validate explicitly provided TAP device
+                if not network_manager.validate_tap_device_available(args.tap_device):
+                    print(f"Error: TAP device '{args.tap_device}' already exists on the system", file=sys.stderr)
+                    sys.exit(1)
+                # Mark explicitly provided device as allocated to prevent conflicts
+                network_manager.allocated_tap_devices.add(args.tap_device)
+
+            # Auto-generate MMDS TAP device name if not specified (always needed for network_config)
+            if not args.mmds_tap:
+                args.mmds_tap = network_manager.find_next_available_tap_device()
+                print(f"Auto-generated MMDS TAP device: {args.mmds_tap}")
+            else:
+                # Validate explicitly provided MMDS TAP device
+                if not network_manager.validate_tap_device_available(args.mmds_tap):
+                    print(f"Error: MMDS TAP device '{args.mmds_tap}' already exists on the system", file=sys.stderr)
+                    sys.exit(1)
+                # Mark explicitly provided device as allocated to prevent conflicts
+                network_manager.allocated_tap_devices.add(args.mmds_tap)
+
+        # Build rootfs from image (only after network validation passes)
         rootfs_path = filesystem_manager.build_rootfs(
             vm_name=args.name,
             image_filename=args.image,
@@ -288,30 +341,6 @@ def main():
         )
         if not rootfs_path:
             sys.exit(1)  # Error message already printed by build_rootfs
-
-        # Auto-generate TAP device name if not specified
-        if not args.tap_device:
-            args.tap_device = network_manager.find_next_available_tap_device()
-            print(f"Auto-generated TAP device: {args.tap_device}")
-        else:
-            # Validate explicitly provided TAP device
-            if not network_manager.validate_tap_device_available(args.tap_device):
-                print(f"Error: TAP device '{args.tap_device}' already exists on the system", file=sys.stderr)
-                sys.exit(1)
-            # Mark explicitly provided device as allocated to prevent conflicts
-            network_manager.allocated_tap_devices.add(args.tap_device)
-
-        # Auto-generate MMDS TAP device name if not specified (always needed for network_config)
-        if not args.mmds_tap:
-            args.mmds_tap = network_manager.find_next_available_tap_device()
-            print(f"Auto-generated MMDS TAP device: {args.mmds_tap}")
-        else:
-            # Validate explicitly provided MMDS TAP device
-            if not network_manager.validate_tap_device_available(args.mmds_tap):
-                print(f"Error: MMDS TAP device '{args.mmds_tap}' already exists on the system", file=sys.stderr)
-                sys.exit(1)
-            # Mark explicitly provided device as allocated to prevent conflicts
-            network_manager.allocated_tap_devices.add(args.mmds_tap)
 
         # Set hostname to VM name if not specified
         hostname = args.hostname if args.hostname else args.name
@@ -340,7 +369,8 @@ def main():
             mmds_tap=args.mmds_tap,
             foreground=args.foreground,
             hostname=hostname,
-            base_image=args.image
+            base_image=args.image,
+            networkdriver=args.networkdriver
         )
 
     elif args.action in ["destroy", "stop", "start", "restart"]:

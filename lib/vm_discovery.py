@@ -170,6 +170,9 @@ class VMDiscovery:
             # Get base image from cached configuration (available for both running and stopped)
             base_image = cached_config.get('base_image', 'N/A')
             
+            # Get networkdriver from cached configuration
+            networkdriver = cached_config.get('networkdriver', 'internal')  # Default to internal for backward compatibility
+            
             # Format TAP interface info with IP
             tap_info = f"{tap_device}"
             if tap_ip != 'N/A':
@@ -188,11 +191,12 @@ class VMDiscovery:
                 base_image,
                 kernel_name,
                 tap_info,
-                mmds_tap_info
+                mmds_tap_info,
+                networkdriver
             ])
         
         # Print table header
-        headers = ['VM Name', 'State', 'Internal IP', 'CPUs', 'Memory', 'Rootfs', 'Base Image', 'Kernel', 'TAP Interface (IP)', 'MMDS TAP']
+        headers = ['VM Name', 'State', 'Internal IP', 'CPUs', 'Memory', 'Rootfs', 'Base Image', 'Kernel', 'TAP Interface (IP)', 'MMDS TAP', 'Network Driver']
         
         # Calculate column widths
         col_widths = [len(header) for header in headers]

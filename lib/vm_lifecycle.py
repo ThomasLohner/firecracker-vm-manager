@@ -77,7 +77,7 @@ autostart=true
             print(f"Error reloading supervisor: {e}", file=sys.stderr)
             return False
     
-    def configure_and_start(self, kernel_path, rootfs_path, tap_device, tap_ip, vm_ip, cpus, memory, metadata, mmds_tap):
+    def configure_and_start(self, kernel_path, rootfs_path, tap_device, tap_ip, vm_ip, cpus, memory, metadata, mmds_tap, networkdriver="internal"):
         """Configure all VM settings and start the microVM"""
         print("Configuring Firecracker VM...")
         
@@ -100,7 +100,7 @@ autostart=true
         print(f"✓ Rootfs set: {rootfs_path}")
 
         # Setup TAP device and networking
-        if not self.network_manager.setup_tap_device(tap_device, tap_ip, vm_ip):
+        if not self.network_manager.setup_tap_device(tap_device, tap_ip, vm_ip, networkdriver):
             print("Failed to setup TAP device", file=sys.stderr)
             return False
 
@@ -113,7 +113,7 @@ autostart=true
         # Configure MMDS if metadata provided
         if metadata and mmds_tap:
             # Setup dedicated MMDS TAP device
-            if not self.network_manager.setup_mmds_tap_device(mmds_tap):
+            if not self.network_manager.setup_mmds_tap_device(mmds_tap, networkdriver):
                 print("Failed to setup MMDS TAP device", file=sys.stderr)
                 return False
             
@@ -142,7 +142,7 @@ autostart=true
         
         return True
     
-    def create_vm_supervisor(self, vm_name, kernel_path, rootfs_path, tap_device, tap_ip, vm_ip, cpus, memory, metadata, mmds_tap):
+    def create_vm_supervisor(self, vm_name, kernel_path, rootfs_path, tap_device, tap_ip, vm_ip, cpus, memory, metadata, mmds_tap, networkdriver="internal"):
         """Create VM using supervisor"""
         # Create supervisor config
         if not self.create_supervisor_config(vm_name, self.socket_path):
@@ -178,9 +178,9 @@ autostart=true
             return False
         
         # Now configure the VM
-        return self.configure_and_start(kernel_path, rootfs_path, tap_device, tap_ip, vm_ip, cpus, memory, metadata, mmds_tap)
+        return self.configure_and_start(kernel_path, rootfs_path, tap_device, tap_ip, vm_ip, cpus, memory, metadata, mmds_tap, networkdriver)
     
-    def create_vm_foreground(self, vm_name, kernel_path, rootfs_path, tap_device, tap_ip, vm_ip, cpus, memory, metadata, mmds_tap):
+    def create_vm_foreground(self, vm_name, kernel_path, rootfs_path, tap_device, tap_ip, vm_ip, cpus, memory, metadata, mmds_tap, networkdriver="internal"):
         """Create VM in foreground mode for debugging"""
         print(f"Starting Firecracker in foreground mode...")
         print(f"Command: /usr/sbin/firecracker --id {vm_name} --api-sock {self.socket_path}")
@@ -189,10 +189,10 @@ autostart=true
         def cleanup():
             print("\nCleaning up...")
             # Remove TAP device
-            self.network_manager.remove_tap_device(tap_device)
+            self.network_manager.remove_tap_device(tap_device, networkdriver)
             # Remove MMDS TAP device if it was used
             if mmds_tap:
-                self.network_manager.remove_tap_device(mmds_tap)
+                self.network_manager.remove_tap_device(mmds_tap, networkdriver)
             # Remove socket file
             socket_file = Path(self.socket_path)
             if socket_file.exists():
@@ -219,7 +219,7 @@ autostart=true
             time.sleep(1)
             
             # Configure the VM
-            config_success = self.configure_and_start(kernel_path, rootfs_path, tap_device, tap_ip, vm_ip, cpus, memory, metadata, mmds_tap)
+            config_success = self.configure_and_start(kernel_path, rootfs_path, tap_device, tap_ip, vm_ip, cpus, memory, metadata, mmds_tap, networkdriver)
             
             if not config_success:
                 print("VM configuration failed, terminating Firecracker", file=sys.stderr)
@@ -241,7 +241,7 @@ autostart=true
         
         return True
     
-    def create_vm(self, vm_name, kernel_path, rootfs_path, tap_device, tap_ip, vm_ip, cpus, memory, metadata=None, mmds_tap=None, foreground=False, hostname=None, base_image=None):
+    def create_vm(self, vm_name, kernel_path, rootfs_path, tap_device, tap_ip, vm_ip, cpus, memory, metadata=None, mmds_tap=None, foreground=False, hostname=None, base_image=None, networkdriver="internal"):
         """Create and start a new VM"""
         print(f"Creating VM: {vm_name}...")
         
@@ -258,13 +258,13 @@ autostart=true
         
         success = False
         if foreground:
-            success = self.create_vm_foreground(vm_name, kernel_path, rootfs_path, tap_device, tap_ip, vm_ip, cpus, memory, metadata, mmds_tap)
+            success = self.create_vm_foreground(vm_name, kernel_path, rootfs_path, tap_device, tap_ip, vm_ip, cpus, memory, metadata, mmds_tap, networkdriver)
         else:
-            success = self.create_vm_supervisor(vm_name, kernel_path, rootfs_path, tap_device, tap_ip, vm_ip, cpus, memory, metadata, mmds_tap)
+            success = self.create_vm_supervisor(vm_name, kernel_path, rootfs_path, tap_device, tap_ip, vm_ip, cpus, memory, metadata, mmds_tap, networkdriver)
         
         # Save VM configuration to cache if creation was successful
         if success:
-            if not self.config_manager.save_vm_config(vm_name, kernel_path, rootfs_path, tap_device, mmds_tap, vm_ip, tap_ip, cpus, memory, hostname or vm_name, base_image):
+            if not self.config_manager.save_vm_config(vm_name, kernel_path, rootfs_path, tap_device, mmds_tap, vm_ip, tap_ip, cpus, memory, hostname or vm_name, base_image, networkdriver):
                 print("Warning: Failed to save VM configuration to cache", file=sys.stderr)
         
         return success
@@ -290,16 +290,24 @@ autostart=true
         tap_device = cache_data.get('tap_device')
         mmds_tap = cache_data.get('mmds_tap')
         rootfs_path = cache_data.get('rootfs')
+        networkdriver = cache_data.get('networkdriver', 'internal')  # Default to internal for backward compatibility
         
         # 3. Ask for confirmation unless force_destroy is specified
         if not force_destroy:
             print(f"\n⚠️  WARNING: This will permanently delete:")
             if rootfs_path:
                 print(f"   - VM rootfs file: {rootfs_path}")
-            if tap_device:
-                print(f"   - TAP device: {tap_device}")
-            if mmds_tap:
-                print(f"   - MMDS TAP device: {mmds_tap}")
+            
+            # Only warn about TAP device removal for internal network mode
+            if networkdriver == "internal":
+                if tap_device:
+                    print(f"   - TAP device: {tap_device}")
+                if mmds_tap:
+                    print(f"   - MMDS TAP device: {mmds_tap}")
+            else:
+                # For external mode, clarify that TAP devices will NOT be removed
+                print(f"   - NOTE: TAP devices will NOT be removed (external network mode)")
+            
             print(f"   - Supervisor configuration for '{vm_name}'")
             print(f"   - VM configuration cache")
             
@@ -321,13 +329,13 @@ autostart=true
         
         # 5. Remove TAP devices using cached config
         if tap_device:
-            if not self.network_manager.remove_tap_device(tap_device):
+            if not self.network_manager.remove_tap_device(tap_device, networkdriver):
                 print(f"Warning: Failed to remove TAP device {tap_device}", file=sys.stderr)
         else:
             print("✓ No main TAP device found in cache")
         
         if mmds_tap:
-            if not self.network_manager.remove_tap_device(mmds_tap):
+            if not self.network_manager.remove_tap_device(mmds_tap, networkdriver):
                 print(f"Warning: Failed to remove MMDS TAP device {mmds_tap}", file=sys.stderr)
         else:
             print("✓ No MMDS TAP device found in cache")
@@ -410,6 +418,7 @@ autostart=true
         cpus = cache_data.get('cpus')
         memory = cache_data.get('memory')
         hostname = cache_data.get('hostname', vm_name)
+        networkdriver = cache_data.get('networkdriver', 'internal')  # Default to internal for backward compatibility
         
         # Validate that all required values are present
         required_fields = ['kernel', 'rootfs', 'tap_device', 'mmds_tap', 'vm_ip', 'tap_ip', 'cpus', 'memory']
@@ -455,7 +464,7 @@ autostart=true
             return False
         
         # Configure the VM using cached settings
-        success = self.configure_and_start(kernel_path, rootfs_path, tap_device, tap_ip, vm_ip, cpus, memory, metadata, mmds_tap)
+        success = self.configure_and_start(kernel_path, rootfs_path, tap_device, tap_ip, vm_ip, cpus, memory, metadata, mmds_tap, networkdriver)
         
         if success:
             print(f"✓ VM {vm_name} started successfully from cached configuration!")

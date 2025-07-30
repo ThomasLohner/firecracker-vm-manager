@@ -96,7 +96,7 @@ class ConfigManager:
         """Get the cache file path for a VM"""
         return self.cache_dir / f"{vm_name}.json"
     
-    def save_vm_config(self, vm_name, kernel_path, rootfs_path, tap_device, mmds_tap, vm_ip, tap_ip, cpus, memory, hostname, base_image=None):
+    def save_vm_config(self, vm_name, kernel_path, rootfs_path, tap_device, mmds_tap, vm_ip, tap_ip, cpus, memory, hostname, base_image=None, networkdriver="internal"):
         """Save VM configuration to cache file"""
         if not self._ensure_cache_directory():
             return False
@@ -112,6 +112,7 @@ class ConfigManager:
             "memory": memory,
             "hostname": hostname,
             "base_image": base_image,
+            "networkdriver": networkdriver,
             "created_at": time.time()
         }
         
