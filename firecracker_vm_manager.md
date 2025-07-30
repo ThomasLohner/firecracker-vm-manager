@@ -8,8 +8,8 @@ Download the latest `fcm` binary from the [releases page]https://github.com/Thom
 
 ```bash
 # Download and install fcm binary
-curl -L -o fcm https://github.com/ThomasLohner/firecracker-vm-manager/releases/download/v1.1.0/fcm-v1.1.0-x86.tgz
-tar xfz fcm-v1.1.0-x86.tgz
+curl -L -o fcm https://github.com/ThomasLohner/firecracker-vm-manager/releases/download/v1.1.0/fcm-v1.1.0-Ubuntu_24_04_x86.tgz
+tar xfz fcm-v1.1.0-Ubuntu_24_04_x86.tgz
 sudo mv fcm-v1.1.0 /usr/local/bin/fcm
 ```
 
