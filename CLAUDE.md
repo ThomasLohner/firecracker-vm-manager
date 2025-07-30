@@ -20,6 +20,7 @@
 - Comprehensive VM discovery (running + stopped) with state monitoring
 - Enhanced destroy action with confirmation prompts and cache-based cleanup
 - Base image tracking for VM provenance
+- External network driver support for using existing TAP devices
 
 ## Essential Documentation Links
 
@@ -102,7 +103,7 @@ firecracker_vm_manager.py (CLI)
 - Auto-creates `/var/lib/firecracker/cache/` directory for VM configurations
 - JSON storage: `/var/lib/firecracker/cache/<vm_name>.json` with complete VM state
 - Enables stop/start workflow without losing configuration
-- Stores: kernel, rootfs, TAP devices, IPs, CPU/memory, hostname, base_image, timestamp
+- Stores: kernel, rootfs, TAP devices, IPs, CPU/memory, hostname, base_image, networkdriver, timestamp
 
 #### Image-Based Rootfs Building
 - Base images in IMAGES_PATH serve as templates
@@ -111,12 +112,14 @@ firecracker_vm_manager.py (CLI)
 - Force overwrite protection with `--force-rootfs` override
 - Supports: ext4, ext3, ext2, img, qcow2, raw formats
 
-#### TAP Device Auto-Generation
-- System scan: `ip link show` to find existing devices
+#### TAP Device Management
+- **Internal Mode (default)**: Auto-generation with system scan via `ip link show`
 - Sequential naming: tap0, tap1, tap2, etc.
 - Session tracking prevents conflicts
 - Auto-generates both main and MMDS TAP devices
 - Validates explicitly specified devices don't exist
+- **External Mode**: Uses existing TAP devices without creating/removing them
+- Validates TAP devices exist, have correct IPs, and routes are configured
 
 #### VM Discovery and Monitoring
 - Scans cache directory and socket files
@@ -307,12 +310,21 @@ fcm destroy --name vm1                          # Destroy (with confirmation)
 - `--vm-ip`: VM guest IP
 
 ### Optional Parameters
-- `--tap-device`, `--mmds-tap`: Explicit TAP devices (auto-generated if omitted)
+- `--tap-device`, `--mmds-tap`: Explicit TAP devices (auto-generated if omitted in internal mode)
 - `--hostname`: VM hostname (defaults to VM name)
 - `--metadata`: JSON metadata string or @file
 - `--foreground`: Debug mode (no supervisor)
 - `--force-rootfs`: Overwrite existing rootfs
 - `--force-destroy`: Skip confirmation prompt
+- `--networkdriver`: Network mode - `internal` (default, manages TAP devices) or `external` (uses existing TAP devices)
+- `--version`, `-v`: Show version information
+
+#### External Network Mode Requirements
+When using `--networkdriver external`, these parameters become **mandatory**:
+- `--tap-device`: Existing TAP device name
+- `--tap-ip`: IP address that must be assigned to TAP device
+- `--mmds-tap`: Existing MMDS TAP device name  
+- `--vm-ip`: VM IP that must have a route via TAP device
 
 ## Development Guidelines
 
@@ -383,6 +395,8 @@ fcm destroy --name vm1                          # Destroy (with confirmation)
 7. **Hostname Support**: Configurable VM hostnames via `--hostname` parameter, auto-injected into MMDS
 8. **Enhanced TAP Management**: Auto-generation with conflict prevention, session tracking
 9. **Configuration Caching**: Complete stop/start workflow with JSON-based VM state persistence
+10. **External Network Driver**: `--networkdriver external` mode for using existing TAP devices and network configuration
+11. **Version Information**: `--version` parameter with proper argparse integration
 
 ### Breaking Changes
 - Destroy action requires VM to be stopped first
@@ -432,6 +446,7 @@ autostart=true
   "cpus": 2,
   "memory": 1024,
   "hostname": "vm-name",
+  "networkdriver": "internal",
   "created_at": 1234567890
 }
 ```

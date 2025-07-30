@@ -8,9 +8,9 @@ Download the latest `fcm` binary from the [releases page]https://github.com/Thom
 
 ```bash
 # Download and install fcm binary
-curl -L -o fcm https://github.com/ThomasLohner/firecracker-vm-manager/releases/download/v1.0.0/fcm-v1.0.0-x86.tgz
-tar xfz fcm-v1.0.0-x86.tgz
-sudo mv fcm-v1.0.0 /usr/local/bin/fcm
+curl -L -o fcm https://github.com/ThomasLohner/firecracker-vm-manager/releases/download/v1.1.0/fcm-v1.1.0-x86.tgz
+tar xfz fcm-v1.1.0-x86.tgz
+sudo mv fcm-v1.1.0 /usr/local/bin/fcm
 ```
 
 ### Development Version
@@ -19,7 +19,7 @@ For development purposes, you can use the `fcm.sh` script directly from the sour
 
 ```bash
 # Clone the repository and use fcm.sh for development
-git clone https://github.com/your-repo/firecracker-vm-manager.git
+git clone https://github.com/ThomasLohner/firecracker-vm-manager.git
 cd firecracker-vm-manager
 ./fcm.sh create --name myvm --kernel vmlinux-6.1.141 --image alpine.ext4 --rootfs-size 1G --tap-ip 172.16.0.1 --vm-ip 172.16.0.2
 ```
@@ -130,12 +130,51 @@ fcm --help
 
 ### Optional
 - `--config`: Configuration file path (default: /etc/firecracker.env)
-- `--tap-device`, `--mmds-tap`: Explicit TAP devices (auto-generated if omitted)
+- `--tap-device`, `--mmds-tap`: Explicit TAP devices (auto-generated if omitted in internal mode)
 - `--hostname`: VM hostname (defaults to VM name)
 - `--metadata`: JSON metadata string or @file
 - `--foreground`: Debug mode (no supervisor)
 - `--force-rootfs`: Overwrite existing rootfs
 - `--force-destroy`: Skip destroy confirmation
+- `--networkdriver`: Network mode - `internal` (default, manages TAP devices) or `external` (uses existing TAP devices)
+- `--version`, `-v`: Show version information
+
+### External Network Driver Mode
+
+When using `--networkdriver external`, the system uses existing TAP devices and network configuration instead of creating/managing them. This mode requires:
+
+**Mandatory Parameters:**
+- `--tap-device`: Name of existing TAP device (must already exist)
+- `--tap-ip`: IP address (must already be assigned to the TAP device)
+- `--mmds-tap`: Name of existing MMDS TAP device (must already exist)
+- `--vm-ip`: VM IP address (must have a route via the TAP device)
+
+**Pre-Creation Validation:**
+- TAP devices exist on the system
+- TAP device has the specified IP address assigned
+- Host route exists for VM IP via TAP device
+
+**Behavior Differences:**
+- **CREATE**: Validates existing network setup, skips TAP/route creation
+- **DESTROY**: Preserves TAP devices and routes (only removes VM-specific resources)
+- **LIST**: Shows "external" in Network Driver column
+
+**Example:**
+```bash
+# Setup existing TAP devices first (manual setup)
+sudo ip tuntap add tap10 mode tap
+sudo ip addr add 192.168.10.1/32 dev tap10
+sudo ip link set tap10 up
+sudo tuntap add tap11 mode tap
+sudo ip link set tap11 up
+sudo ip route add 192.168.10.2/32 dev tap10
+
+# Create VM using external network mode
+fcm create --name myvm --networkdriver external \
+  --tap-device tap10 --tap-ip 192.168.10.1 \
+  --mmds-tap tap11 --vm-ip 192.168.10.2 \
+  --kernel vmlinux --image alpine.ext4 --rootfs-size 1G
+```
 
 ## Key Features
 
@@ -150,15 +189,16 @@ fcm --help
 - Automatic `resize2fs` resizing to specified size
 - Force overwrite protection (`--force-rootfs` to override)
 
-### TAP Device Auto-Generation
-- Scans existing devices, finds next available (tap0, tap1, etc.)
+### TAP Device Management
+- **Internal Mode (default)**: Auto-generation by scanning existing devices, finds next available (tap0, tap1, etc.)
 - Session tracking prevents conflicts
 - Two devices per VM: main interface + MMDS
+- **External Mode**: Uses existing TAP devices without creating/removing them
 
 ### VM Configuration Caching
 - Automatic caching to `/var/lib/firecracker/cache/<vm_name>.json`
 - Enables stop/start workflow without losing settings
-- Stores all VM configuration: kernel, rootfs, TAP devices, IPs, resources
+- Stores all VM configuration: kernel, rootfs, TAP devices, IPs, resources, network driver mode
 
 ### Metadata Service (MMDS)
 - Always configured with automatic network configuration injection
@@ -194,10 +234,10 @@ curl -H "X-metadata-token: $TOKEN" "http://169.254.169.254/network_config"
 
 ### List Output Example
 ```
-VM Name | Internal IP | CPUs | Memory  | Rootfs     | Kernel     | TAP Interface (IP) | MMDS TAP
---------|-------------|------|---------|------------|------------|--------------------|---------
-vm1     | 10.4.17.1   | 1    | 2048 MiB| alpine.ext4| vmlinux    | tap2 (192.168.1.1) | tap3
-vm2     | 10.4.17.2   | 2    | 512 MiB | ubuntu.ext4| vmlinux    | tap4 (192.168.1.2) | tap5
+VM Name | State   | Internal IP | CPUs | Memory   | Rootfs      | Base Image  | Kernel  | TAP Interface (IP) | MMDS TAP | Network Driver
+--------|---------|-------------|------|----------|-------------|-------------|---------|--------------------|---------|--------------
+vm1     | running | 10.4.17.1   | 1    | 2048 MiB | alpine.ext4 | alpine.ext4 | vmlinux | tap2 (192.168.1.1) | tap3     | internal
+vm2     | stopped | 10.4.17.2   | 2    | 512 MiB  | ubuntu.ext4 | ubuntu.ext4 | vmlinux | tap4 (192.168.1.2) | tap5     | external
 ```
 
 ### Debug Mode
@@ -222,20 +262,25 @@ fcm create --name myvm --kernel vmlinux --image alpine.ext4 --rootfs-size 1G \
 ## What It Does
 
 ### CREATE
-1. Build rootfs from base image (`resize2fs` to specified size)
-2. Auto-generate or validate TAP devices (main + MMDS)
-3. Create supervisor config and start Firecracker process
-4. Configure VM via API (CPU/memory, kernel, rootfs, network, MMDS)
-5. Start microVM and cache configuration
+1. Validate network setup (external mode) or prepare TAP devices (internal mode)
+2. Build rootfs from base image (`resize2fs` to specified size)
+3. Setup/validate TAP devices based on network driver mode
+4. Create supervisor config and start Firecracker process
+5. Configure VM via API (CPU/memory, kernel, rootfs, network, MMDS)
+6. Start microVM and cache configuration (including network driver mode)
 
 ### DESTROY
 1. Check VM is stopped, load cached config, get user confirmation
-2. Remove socket, TAP devices, rootfs file, supervisor config, cache
+2. Remove VM-specific resources based on network driver mode:
+   - **Internal mode**: Remove socket, TAP devices, rootfs file, supervisor config, cache
+   - **External mode**: Remove socket, rootfs file, supervisor config, cache (preserves TAP devices)
 3. **⚠️ WARNING**: Permanently deletes rootfs file
 
 ### STOP/START/RESTART
 - **STOP**: Stop process, remove socket, preserve TAP devices and cache
-- **START**: Load cache, start process, restore configuration
+- **START**: Load cache (including network driver mode), start process, restore configuration
 - **RESTART**: Stop + start sequence
 
-The script handles all network configuration automatically: creates TAP devices, assigns IPs, configures routes, and sets up dual interfaces (eth0 + mmds0) for each VM.
+**Network Management:**
+- **Internal mode**: Automatically creates TAP devices, assigns IPs, configures routes, and sets up dual interfaces (eth0 + mmds0)
+- **External mode**: Uses existing TAP devices and network configuration without modification
