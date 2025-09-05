@@ -506,7 +506,7 @@ self.allocated_tap_devices.add(next_device)  # prevent conflicts
 ### Supervisor Configuration Template
 ```ini
 [program:<vm_name>]
-command=/usr/sbin/firecracker --id <vm_name> --api-sock <socket_path>
+command=/bin/sh -c 'mkdir -p <socket_directory> && exec /usr/sbin/firecracker --id <vm_name> --api-sock <socket_path>'
 stdout_logfile=/var/log/<vm_name>.log
 stderr_logfile=/var/log/<vm_name>.error.log
 autostart=true

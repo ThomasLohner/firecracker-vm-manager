@@ -51,8 +51,11 @@ class VMLifecycle:
     
     def create_supervisor_config(self, vm_name, socket_path):
         """Create supervisord configuration for VM"""
+        # Extract socket directory from socket path
+        socket_dir = Path(socket_path).parent
+        
         config_content = f"""[program:{vm_name}]
-command=/usr/sbin/firecracker --id {vm_name} --api-sock {socket_path}
+command=/bin/sh -c 'mkdir -p {socket_dir} && exec /usr/sbin/firecracker --id {vm_name} --api-sock {socket_path}'
 stdout_logfile=/var/log/{vm_name}.log
 stderr_logfile=/var/log/{vm_name}.error.log
 autostart=true
