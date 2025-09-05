@@ -201,22 +201,11 @@ def main():
         if not resolved_kernel_path:
             sys.exit(1)  # Error message already printed by resolve_kernel_path
 
-        # Handle TAP device setup and validation based on networkdriver mode
+        # Prepare network devices based on networkdriver mode
         # Do this BEFORE creating rootfs to avoid zombie rootfs files
-        if args.networkdriver == "external":
-            # External mode: validate existing TAP devices and network configuration
-            if not network_manager.validate_external_network_setup(args.tap_device, args.tap_ip, args.mmds_tap, args.vm_ip):
-                sys.exit(1)  # Error messages already printed by validate_external_network_setup
-        else:
-            # Internal mode: allocate TAP devices
-            args.tap_device = network_manager.allocate_tap_device(args.tap_device, "TAP")
-            if not args.tap_device:
-                sys.exit(1)  # Error message already printed by allocate_tap_device
-            
-            # Allocate MMDS TAP device (always needed for network_config)
-            args.mmds_tap = network_manager.allocate_tap_device(args.mmds_tap, "MMDS TAP")
-            if not args.mmds_tap:
-                sys.exit(1)  # Error message already printed by allocate_tap_device
+        result = network_manager.prepare_network_devices(args)
+        if not result[0]:  # Check if tap_device was allocated successfully
+            sys.exit(1)  # Error messages already printed by prepare_network_devices
 
         # Build rootfs from image (only after network validation passes)
         rootfs_path = filesystem_manager.build_rootfs(

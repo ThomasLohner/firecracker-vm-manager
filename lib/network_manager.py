@@ -141,6 +141,34 @@ class NetworkManager:
                 # Device is already added to allocated_tap_devices by find_next_available_tap_device
             return device_name
     
+    def prepare_network_devices(self, args):
+        """Prepare network devices based on networkdriver mode
+        
+        Args:
+            args: Namespace object with network configuration parameters
+                  Updates args.tap_device and args.mmds_tap in place
+        
+        Returns:
+            tuple: (tap_device, mmds_tap) on success, (None, None) on failure
+        """
+        if args.networkdriver == "external":
+            # External mode: validate existing TAP devices and network configuration
+            if not self.validate_external_network_setup(args.tap_device, args.tap_ip, args.mmds_tap, args.vm_ip):
+                return None, None  # Error messages already printed by validate_external_network_setup
+            return args.tap_device, args.mmds_tap
+        else:
+            # Internal mode: allocate TAP devices
+            args.tap_device = self.allocate_tap_device(args.tap_device, "TAP")
+            if not args.tap_device:
+                return None, None  # Error message already printed by allocate_tap_device
+            
+            # Allocate MMDS TAP device (always needed for network_config)
+            args.mmds_tap = self.allocate_tap_device(args.mmds_tap, "MMDS TAP")
+            if not args.mmds_tap:
+                return None, None  # Error message already printed by allocate_tap_device
+            
+            return args.tap_device, args.mmds_tap
+    
     def get_tap_device_ip(self, device_name):
         """Get IP address of a TAP device from the system"""
         if not device_name or device_name == 'N/A':
