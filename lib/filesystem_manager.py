@@ -5,13 +5,14 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
+from .config_manager import ConfigManager
 
 
 class FilesystemManager:
     """Manages rootfs building, image/kernel listing and validation"""
     
-    def __init__(self):
-        pass
+    def __init__(self, config_manager=None):
+        self.config_manager = config_manager or ConfigManager()
     
     def _run_command(self, cmd, check=True, capture_output=True, text=True):
         """Helper method to run subprocess commands with consistent error handling"""
@@ -33,13 +34,16 @@ class FilesystemManager:
             return None
         return path
     
-    def resolve_kernel_path(self, kernel_filename, kernel_path_env):
+    def resolve_kernel_path(self, kernel_filename):
         """Resolve kernel filename to full path using KERNEL_PATH directory"""
         if not kernel_filename:
             return None
         
+        env_config = self.config_manager.get_env_config()
+        kernel_path_env = env_config.get('KERNEL_PATH')
+        
         if not kernel_path_env:
-            print("Error: KERNEL_PATH not set in .env file", file=sys.stderr)
+            print("Error: KERNEL_PATH not set in config file", file=sys.stderr)
             return None
         
         kernel_dir = Path(kernel_path_env)
@@ -56,13 +60,17 @@ class FilesystemManager:
             print(f"Use './fcm kernels' to see available kernels")
             return None
     
-    def build_rootfs(self, vm_name, image_filename, images_path_env, rootfs_path_env, rootfs_size, force_overwrite=False):
+    def build_rootfs(self, vm_name, image_filename, rootfs_size, force_overwrite=False):
         """Build rootfs by copying image file and resizing it"""
         print(f"Building rootfs for VM: {vm_name}...")
         
+        env_config = self.config_manager.get_env_config()
+        images_path_env = env_config.get('IMAGES_PATH')
+        rootfs_path_env = env_config.get('ROOTFS_PATH')
+        
         # Validate IMAGES_PATH
         if not images_path_env:
-            print("Error: IMAGES_PATH not set in .env file", file=sys.stderr)
+            print("Error: IMAGES_PATH not set in config file", file=sys.stderr)
             return None
             
         images_dir = Path(images_path_env)
@@ -72,7 +80,7 @@ class FilesystemManager:
         
         # Validate ROOTFS_PATH
         if not rootfs_path_env:
-            print("Error: ROOTFS_PATH not set in .env file", file=sys.stderr)
+            print("Error: ROOTFS_PATH not set in config file", file=sys.stderr)
             return None
             
         rootfs_dir = Path(rootfs_path_env)
@@ -131,10 +139,13 @@ class FilesystemManager:
                     pass
             return None
     
-    def list_available_kernels(self, kernel_path_env):
+    def list_available_kernels(self):
         """List available kernel files from KERNEL_PATH directory"""
+        env_config = self.config_manager.get_env_config()
+        kernel_path_env = env_config.get('KERNEL_PATH')
+        
         if not kernel_path_env:
-            print("Error: KERNEL_PATH not set in .env file", file=sys.stderr)
+            print("Error: KERNEL_PATH not set in config file", file=sys.stderr)
             return False
         
         kernel_dir = Path(kernel_path_env)
@@ -186,10 +197,13 @@ class FilesystemManager:
             print(f"Error accessing kernel directory {kernel_dir}: {e}", file=sys.stderr)
             return False
     
-    def list_available_images(self, images_path_env):
+    def list_available_images(self):
         """List available image files from IMAGES_PATH directory"""
+        env_config = self.config_manager.get_env_config()
+        images_path_env = env_config.get('IMAGES_PATH')
+        
         if not images_path_env:
-            print("Error: IMAGES_PATH not set in .env file", file=sys.stderr)
+            print("Error: IMAGES_PATH not set in config file", file=sys.stderr)
             return False
         
         images_dir = Path(images_path_env)

@@ -115,6 +115,32 @@ class NetworkManager:
         
         return True  # Device is available
     
+    def allocate_tap_device(self, device_name=None, device_type="TAP"):
+        """Allocate a TAP device - either validate provided name or auto-generate one
+        
+        Args:
+            device_name: Optional explicit device name to use
+            device_type: Type of device for error messages (e.g., "TAP", "MMDS TAP")
+            
+        Returns:
+            str: The allocated device name, or None if allocation failed
+        """
+        if device_name:
+            # Validate explicitly provided TAP device
+            if not self.validate_tap_device_available(device_name):
+                print(f"Error: {device_type} device '{device_name}' already exists on the system", file=sys.stderr)
+                return None
+            # Mark explicitly provided device as allocated to prevent conflicts
+            self.allocated_tap_devices.add(device_name)
+            return device_name
+        else:
+            # Auto-generate TAP device name
+            device_name = self.find_next_available_tap_device()
+            if device_name:
+                print(f"Auto-generated {device_type} device: {device_name}")
+                # Device is already added to allocated_tap_devices by find_next_available_tap_device
+            return device_name
+    
     def get_tap_device_ip(self, device_name):
         """Get IP address of a TAP device from the system"""
         if not device_name or device_name == 'N/A':

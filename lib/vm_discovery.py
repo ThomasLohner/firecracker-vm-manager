@@ -9,9 +9,9 @@ from .network_manager import NetworkManager
 class VMDiscovery:
     """Manages VM discovery, state detection, and table formatting"""
     
-    def __init__(self, socket_path_prefix='/tmp', config_manager=None):
-        self.socket_path_prefix = socket_path_prefix
+    def __init__(self, config_manager=None):
         self.config_manager = config_manager or ConfigManager()
+        self.socket_path_prefix = self.config_manager.get_socket_path_prefix()
         self.network_manager = NetworkManager()
     
     def discover_all_vms(self):
@@ -163,8 +163,15 @@ class VMDiscovery:
                 tap_device = cached_config.get('tap_device', 'N/A')
                 mmds_tap_device = cached_config.get('mmds_tap', 'N/A')
                 
-                # For stopped VMs, we can't get real-time IP info
-                tap_ip = 'N/A'
+                # For stopped VMs, first try to get the TAP IP from the cached config,
+                # then try to get it from the actual TAP device if it still exists
+                tap_ip = cached_config.get('tap_ip', 'N/A')
+                if tap_device != 'N/A':
+                    # Try to get current IP from the TAP device if it exists
+                    current_tap_ip = self.network_manager.get_tap_device_ip(tap_device)
+                    if current_tap_ip:
+                        tap_ip = current_tap_ip
+                
                 internal_ip = cached_config.get('vm_ip', 'N/A')
             
             # Get base image from cached configuration (available for both running and stopped)
