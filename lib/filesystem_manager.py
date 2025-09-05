@@ -139,19 +139,51 @@ class FilesystemManager:
                     pass
             return None
     
-    def list_available_kernels(self):
-        """List available kernel files from KERNEL_PATH directory"""
+    def prepare_filesystem(self, args):
+        """Prepare filesystem components for VM creation
+        
+        Args:
+            args: Namespace object with VM configuration parameters
+                  Uses: args.kernel, args.image, args.name, args.rootfs_size, args.force_rootfs
+        
+        Returns:
+            tuple: (kernel_path, rootfs_path) on success, (None, None) on failure
+        """
+        # Resolve kernel path (support both filenames and full paths)
+        kernel_path = self.resolve_kernel_path(args.kernel)
+        if not kernel_path:
+            return None, None  # Error message already printed by resolve_kernel_path
+        
+        # Build rootfs from image
+        rootfs_path = self.build_rootfs(
+            vm_name=args.name,
+            image_filename=args.image,
+            rootfs_size=args.rootfs_size,
+            force_overwrite=args.force_rootfs
+        )
+        if not rootfs_path:
+            return None, None  # Error message already printed by build_rootfs
+        
+        return kernel_path, rootfs_path
+    
+    def get_available_kernels(self):
+        """Get available kernel files from KERNEL_PATH directory
+        
+        Returns:
+            list: List of kernel file dictionaries with filename, size, modified
+            None: If error occurred
+        """
         env_config = self.config_manager.get_env_config()
         kernel_path_env = env_config.get('KERNEL_PATH')
         
         if not kernel_path_env:
             print("Error: KERNEL_PATH not set in config file", file=sys.stderr)
-            return False
+            return None
         
         kernel_dir = Path(kernel_path_env)
         if not kernel_dir.is_dir():
             print(f"Error: KERNEL_PATH '{kernel_path_env}' is not a valid directory", file=sys.stderr)
-            return False
+            return None
             
         try:
             # Look for common kernel file patterns
@@ -164,41 +196,126 @@ class FilesystemManager:
             # Remove duplicates and sort
             kernel_files = sorted(set(kernel_files), key=lambda x: x.name)
             
-            if not kernel_files:
-                print(f"No kernel files found in {kernel_dir}")
-                print("Looking for files matching: vmlinux*, bzImage*, kernel*, Image*")
-                return True
-            
-            print(f"Available kernels in {kernel_dir}:")
-            print()
-            
-            # Print table header
-            print(f"{'Filename':<30} {'Size':<10} {'Modified'}")
-            print('-' * 55)
-            
+            # Build list of kernel data
+            kernel_data = []
             for kernel_file in kernel_files:
                 try:
                     stat = kernel_file.stat()
                     size_mb = stat.st_size / (1024 * 1024)
-                    modified = Path(kernel_file).stat().st_mtime
+                    modified = stat.st_mtime
                     modified_str = datetime.fromtimestamp(modified).strftime('%Y-%m-%d %H:%M')
                     
-                    print(f"{kernel_file.name:<30} {size_mb:>6.1f} MB {modified_str}")
-                except Exception as e:
-                    print(f"{kernel_file.name:<30} {'N/A':<10} {'N/A'}")
+                    kernel_data.append({
+                        'filename': kernel_file.name,
+                        'size': f"{size_mb:>6.1f} MB",
+                        'modified': modified_str,
+                        'path': str(kernel_file)
+                    })
+                except Exception:
+                    kernel_data.append({
+                        'filename': kernel_file.name,
+                        'size': 'N/A',
+                        'modified': 'N/A',
+                        'path': str(kernel_file)
+                    })
             
-            print()
-            print(f"Usage: ./fcm create --kernel <filename> ...")
-            print(f"Example: ./fcm create --kernel {kernel_files[0].name} ...")
-            
-            return True
+            return kernel_data
             
         except Exception as e:
             print(f"Error accessing kernel directory {kernel_dir}: {e}", file=sys.stderr)
+            return None
+    
+    def get_available_images(self):
+        """Get available image files from IMAGES_PATH directory
+        
+        Returns:
+            list: List of image file dictionaries with filename, size, modified
+            None: If error occurred
+        """
+        env_config = self.config_manager.get_env_config()
+        images_path_env = env_config.get('IMAGES_PATH')
+        
+        if not images_path_env:
+            print("Error: IMAGES_PATH not set in config file", file=sys.stderr)
+            return None
+        
+        images_dir = Path(images_path_env)
+        if not images_dir.is_dir():
+            print(f"Error: IMAGES_PATH '{images_path_env}' is not a valid directory", file=sys.stderr)
+            return None
+            
+        try:
+            # Look for common image file patterns
+            image_patterns = ['*.ext4', '*.ext3', '*.ext2', '*.img', '*.qcow2', '*.raw']
+            image_files = []
+            
+            for pattern in image_patterns:
+                image_files.extend(images_dir.glob(pattern))
+            
+            # Remove duplicates and sort
+            image_files = sorted(set(image_files), key=lambda x: x.name)
+            
+            # Build list of image data
+            image_data = []
+            for image_file in image_files:
+                try:
+                    stat = image_file.stat()
+                    size_mb = stat.st_size / (1024 * 1024)
+                    modified = stat.st_mtime
+                    modified_str = datetime.fromtimestamp(modified).strftime('%Y-%m-%d %H:%M')
+                    
+                    image_data.append({
+                        'filename': image_file.name,
+                        'size': f"{size_mb:>6.1f} MB",
+                        'modified': modified_str,
+                        'path': str(image_file)
+                    })
+                except Exception:
+                    image_data.append({
+                        'filename': image_file.name,
+                        'size': 'N/A',
+                        'modified': 'N/A',
+                        'path': str(image_file)
+                    })
+            
+            return image_data
+            
+        except Exception as e:
+            print(f"Error accessing images directory {images_dir}: {e}", file=sys.stderr)
+            return None
+    
+    # Keep old methods for backward compatibility
+    def list_available_kernels(self):
+        """List available kernel files from KERNEL_PATH directory (deprecated - use get_available_kernels)"""
+        kernel_data = self.get_available_kernels()
+        if kernel_data is None:
             return False
+        
+        env_config = self.config_manager.get_env_config()
+        kernel_path = env_config.get('KERNEL_PATH')
+        
+        print(f"Available kernels in {kernel_path}:")
+        
+        if not kernel_data:
+            print("No kernel files found")
+            print("Looking for files matching: vmlinux*, bzImage*, kernel*, Image*")
+            return True
+        
+        print()
+        print(f"{'Filename':<30} {'Size':<10} {'Modified'}")
+        print('-' * 55)
+        
+        for kernel in kernel_data:
+            print(f"{kernel['filename']:<30} {kernel['size']:<10} {kernel['modified']}")
+        
+        print()
+        print("Usage: ./fcm create --kernel <filename> ...")
+        print(f"Example: ./fcm create --kernel {kernel_data[0]['filename']} ...")
+        
+        return True
     
     def list_available_images(self):
-        """List available image files from IMAGES_PATH directory"""
+        """List available image files from IMAGES_PATH directory (deprecated - use get_available_images)"""
         env_config = self.config_manager.get_env_config()
         images_path_env = env_config.get('IMAGES_PATH')
         

@@ -2,11 +2,9 @@
 
 import argparse
 import sys
-from pathlib import Path
 
 from lib.config_manager import ConfigManager
 from lib.filesystem_manager import FilesystemManager
-from lib.network_manager import NetworkManager
 from lib.vm_discovery import VMDiscovery
 from lib.vm_lifecycle import VMLifecycle
 
@@ -114,6 +112,149 @@ PREREQUISITES:
     sys.exit(0)
 
 
+def format_kernels_table(kernel_files):
+    """Format kernel files as a table for CLI display"""
+    if not kernel_files:
+        print("No kernel files found")
+        print("Looking for files matching: vmlinux*, bzImage*, kernel*, Image*")
+        return
+    
+    print()
+    print(f"{'Filename':<30} {'Size':<10} {'Modified'}")
+    print('-' * 55)
+    
+    for kernel in kernel_files:
+        filename = kernel['filename']
+        size = kernel['size']
+        modified = kernel['modified']
+        print(f"{filename:<30} {size:<10} {modified}")
+    
+    print()
+    print("Usage: ./fcm create --kernel <filename> ...")
+    print(f"Example: ./fcm create --kernel {kernel_files[0]['filename']} ...")
+
+
+def format_images_table(image_files):
+    """Format image files as a table for CLI display"""
+    if not image_files:
+        print("No image files found")
+        print("Looking for files matching: *.ext4, *.ext3, *.ext2, *.img, *.qcow2, *.raw")
+        return
+    
+    print()
+    print(f"{'Filename':<30} {'Size':<10} {'Modified'}")
+    print('-' * 55)
+    
+    for image in image_files:
+        filename = image['filename']
+        size = image['size']
+        modified = image['modified']
+        print(f"{filename:<30} {size:<10} {modified}")
+    
+    print()
+    print("Usage: ./fcm create --image <filename> ...")
+    print(f"Example: ./fcm create --image {image_files[0]['filename']} ...")
+
+
+def format_vms_table(all_vms):
+    """Format VM information as a table for CLI display"""
+    from pathlib import Path
+    
+    if not all_vms:
+        print("No VMs found.")
+        return
+    
+    # Build table data
+    table_data = []
+    for vm in all_vms:
+        # Extract relevant fields from the VM data structure
+        vm_name = vm['name']
+        state = vm['state']
+        
+        # Get configuration from appropriate source
+        config = vm.get('config')
+        cached_config = vm.get('cached_config', {})
+        
+        # Determine values based on state
+        if state == 'running' and config:
+            # Use live API config for running VMs
+            machine_config = config.get('machine-config', {})
+            cpus = machine_config.get('vcpu_count', 'N/A')
+            memory = machine_config.get('mem_size_mib', 'N/A')
+            
+            # Get kernel name
+            boot_source = config.get('boot-source', {})
+            kernel_path = boot_source.get('kernel_image_path', 'N/A')
+            kernel_name = Path(kernel_path).name if kernel_path != 'N/A' else 'N/A'
+            
+            # Get rootfs name
+            drives = config.get('drives', [])
+            rootfs_filename = 'N/A'
+            for drive in drives:
+                if drive.get('drive_id') == 'rootfs':
+                    rootfs_path = drive.get('path_on_host', 'N/A')
+                    rootfs_filename = Path(rootfs_path).name if rootfs_path != 'N/A' else 'N/A'
+                    break
+            
+            # Get network info
+            network_interfaces = config.get('network-interfaces', [])
+            tap_device = 'N/A'
+            mmds_tap = 'N/A'
+            for iface in network_interfaces:
+                if iface.get('iface_id') == 'eth0':
+                    tap_device = iface.get('host_dev_name', 'N/A')
+                elif iface.get('iface_id') == 'mmds0':
+                    mmds_tap = iface.get('host_dev_name', 'N/A')
+        else:
+            # Use cached config for stopped VMs
+            cpus = cached_config.get('cpus', 'N/A')
+            memory = cached_config.get('memory', 'N/A')
+            kernel_path = cached_config.get('kernel', 'N/A')
+            kernel_name = Path(kernel_path).name if kernel_path != 'N/A' else 'N/A'
+            rootfs_path = cached_config.get('rootfs', 'N/A')
+            rootfs_filename = Path(rootfs_path).name if rootfs_path != 'N/A' else 'N/A'
+            tap_device = cached_config.get('tap_device', 'N/A')
+            mmds_tap = cached_config.get('mmds_tap', 'N/A')
+        
+        # Get additional info from VM data
+        vm_ip = vm.get('vm_ip', 'N/A')
+        tap_ip = vm.get('tap_ip', 'N/A')
+        base_image = vm.get('base_image', 'N/A')
+        networkdriver = vm.get('networkdriver', 'N/A')
+        
+        # Format memory
+        memory_str = f"{memory} MiB" if memory != 'N/A' else 'N/A'
+        
+        # Format TAP with IP
+        tap_str = f"{tap_device} ({tap_ip})" if tap_device != 'N/A' and tap_ip != 'N/A' else tap_device
+        
+        table_data.append([
+            vm_name, state, vm_ip, str(cpus), memory_str, 
+            rootfs_filename, base_image, kernel_name, 
+            tap_str, mmds_tap, networkdriver
+        ])
+    
+    # Print table
+    headers = ['VM Name', 'State', 'Internal IP', 'CPUs', 'Memory', 'Rootfs', 
+               'Base Image', 'Kernel', 'TAP Interface (IP)', 'MMDS TAP', 'Network Driver']
+    
+    # Calculate column widths
+    widths = [len(h) for h in headers]
+    for row in table_data:
+        for i, cell in enumerate(row):
+            widths[i] = max(widths[i], len(str(cell)))
+    
+    # Print header
+    header_line = ' | '.join(h.ljust(w) for h, w in zip(headers, widths))
+    print(header_line)
+    print('-+-'.join('-' * w for w in widths))
+    
+    # Print rows
+    for row in table_data:
+        row_line = ' | '.join(str(cell).ljust(w) for cell, w in zip(row, widths))
+        print(row_line)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Manage Firecracker VMs", add_help=False)
     parser.add_argument("action", nargs="?", choices=["create", "destroy", "stop", "start", "restart", "list", "kernels", "images"], help="Action to perform")
@@ -152,10 +293,6 @@ def main():
         print("Error: Environment setup failed", file=sys.stderr)
         sys.exit(1)
     
-    # Initialize other managers
-    filesystem_manager = FilesystemManager(config_manager)
-    network_manager = NetworkManager()
-
     # Validate action parameters
     success, error_msg = config_manager.validate_action_parameters(args.action, args)
     if not success:
@@ -164,105 +301,65 @@ def main():
 
     if args.action == "kernels":
         # List available kernels
-        success = filesystem_manager.list_available_kernels()
-        if not success:
+        filesystem_manager = FilesystemManager(config_manager)
+        kernel_files = filesystem_manager.get_available_kernels()
+        if kernel_files is None:  # Error occurred
             sys.exit(1)
+        # Get kernel path for display
+        env_config = config_manager.get_env_config()
+        kernel_path = env_config.get('KERNEL_PATH', '/var/lib/firecracker/kernels')
+        print(f"Available kernels in {kernel_path}:")
+        format_kernels_table(kernel_files)
         return
 
     elif args.action == "images":
         # List available images
-        success = filesystem_manager.list_available_images()
-        if not success:
+        filesystem_manager = FilesystemManager(config_manager)
+        image_files = filesystem_manager.get_available_images()
+        if image_files is None:  # Error occurred
             sys.exit(1)
+        # Get images path for display
+        env_config = config_manager.get_env_config()
+        images_path = env_config.get('IMAGES_PATH', '/var/lib/firecracker/images')
+        print(f"Available images in {images_path}:")
+        format_images_table(image_files)
         return
 
     elif args.action == "list":
         # List all VMs (both running and stopped)
         vm_discovery = VMDiscovery(config_manager)
         all_vms = vm_discovery.discover_all_vms()
-        vm_discovery.format_vm_table(all_vms)
+        format_vms_table(all_vms)
         return  # No need to check success for list action
 
     elif args.action == "create":
-        # Validate create-specific parameters
-        success, error_msg = config_manager.validate_create_parameters(args)
-        if not success:
-            print(error_msg, file=sys.stderr)
-            show_help_and_exit()
+        # Create VM lifecycle manager and delegate entire creation process
+        # Use custom socket path if provided, otherwise use VM name
+        vm_lifecycle = VMLifecycle(args.socket if args.socket else args.name, config_manager)
+        success = vm_lifecycle.create_vm(args)
 
-        # Validate external network driver requirements
-        success, error_msg = config_manager.validate_external_network_parameters(args)
-        if not success:
-            print(error_msg, file=sys.stderr)
-            show_help_and_exit()
-
-        # Resolve kernel path (support both filenames and full paths)
-        resolved_kernel_path = filesystem_manager.resolve_kernel_path(args.kernel)
-        if not resolved_kernel_path:
-            sys.exit(1)  # Error message already printed by resolve_kernel_path
-
-        # Prepare network devices based on networkdriver mode
-        # Do this BEFORE creating rootfs to avoid zombie rootfs files
-        result = network_manager.prepare_network_devices(args)
-        if not result[0]:  # Check if tap_device was allocated successfully
-            sys.exit(1)  # Error messages already printed by prepare_network_devices
-
-        # Build rootfs from image (only after network validation passes)
-        rootfs_path = filesystem_manager.build_rootfs(
+    elif args.action == "destroy":
+        # Destroy a VM and clean up all resources
+        vm_lifecycle = VMLifecycle(args.socket if args.socket else args.name, config_manager)
+        success = vm_lifecycle.destroy_vm(
             vm_name=args.name,
-            image_filename=args.image,
-            rootfs_size=args.rootfs_size,
-            force_overwrite=args.force_rootfs
+            force_destroy=args.force_destroy
         )
-        if not rootfs_path:
-            sys.exit(1)  # Error message already printed by build_rootfs
-
-        # Set hostname to VM name if not specified
-        hostname = args.hostname if args.hostname else args.name
-        
-        # Parse metadata (always include network_config since we always have MMDS TAP)
-        # When MMDS TAP is available, always create metadata (at minimum with network_config)
-        metadata = config_manager.parse_metadata(args.metadata, args.tap_ip, args.vm_ip, hostname)
-        if metadata is None:
-            sys.exit(1)  # Error message already printed by parse_metadata
-
-        # Create VM lifecycle manager and create the VM
-        vm_lifecycle = VMLifecycle(args.socket, config_manager)
-        # Share the network manager instance to preserve allocated TAP devices
-        vm_lifecycle.network_manager = network_manager
-        
-        success = vm_lifecycle.create_vm(
-            vm_name=args.name,
-            kernel_path=resolved_kernel_path,
-            rootfs_path=rootfs_path,
-            tap_device=args.tap_device,
-            tap_ip=args.tap_ip,
-            vm_ip=args.vm_ip,
-            cpus=args.cpus,
-            memory=args.memory,
-            metadata=metadata,
-            mmds_tap=args.mmds_tap,
-            foreground=args.foreground,
-            hostname=hostname,
-            base_image=args.image,
-            networkdriver=args.networkdriver
-        )
-
-    elif args.action in ["destroy", "stop", "start", "restart"]:
-        # Create VM lifecycle manager for lifecycle operations
-        vm_lifecycle = VMLifecycle(args.socket, config_manager)
-        
-        if args.action == "destroy":
-            success = vm_lifecycle.destroy_vm(
-                vm_name=args.name,
-                force_destroy=args.force_destroy
-            )
-        elif args.action == "stop":
-            success = vm_lifecycle.stop_vm(vm_name=args.name)
-        elif args.action == "start":
-            success = vm_lifecycle.start_vm(vm_name=args.name)
-        elif args.action == "restart":
-            success = vm_lifecycle.restart_vm(vm_name=args.name)
+    
+    elif args.action == "stop":
+        # Stop a running VM
+        vm_lifecycle = VMLifecycle(args.socket if args.socket else args.name, config_manager)
+        success = vm_lifecycle.stop_vm(vm_name=args.name)
+    
+    elif args.action == "start":
+        # Start a stopped VM
+        vm_lifecycle = VMLifecycle(args.socket if args.socket else args.name, config_manager)
+        success = vm_lifecycle.start_vm(vm_name=args.name)
+    
+    elif args.action == "restart":
+        # Restart a VM (stop then start)
+        vm_lifecycle = VMLifecycle(args.socket if args.socket else args.name, config_manager)
+        success = vm_lifecycle.restart_vm(vm_name=args.name)
 
     if not success:
         sys.exit(1)

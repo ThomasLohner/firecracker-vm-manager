@@ -258,13 +258,8 @@ class ConfigManager:
             )
             
             if result.returncode == 0:
-                # Extract just the version line (first line typically)
-                version_lines = result.stdout.strip().split('\n')
-                version_output = version_lines[0] if version_lines else ""
-                if version_output:
-                    print(f"✓ Firecracker binary found: {version_output}")
-                else:
-                    print(f"✓ Firecracker binary found at {firecracker_path}")
+                # Successfully verified Firecracker binary with --version
+                pass
             else:
                 # Some versions might not support --version, check with --help
                 result = subprocess.run(
@@ -273,9 +268,7 @@ class ConfigManager:
                     text=True,
                     timeout=5
                 )
-                if result.returncode == 0:
-                    print(f"✓ Firecracker binary found at {firecracker_path} (version info not available)")
-                else:
+                if result.returncode != 0:
                     print(f"Warning: Firecracker binary found but could not verify it's working properly", file=sys.stderr)
                     print(f"Error output: {result.stderr}", file=sys.stderr)
                     # Don't fail here, as the binary might still work
@@ -366,6 +359,18 @@ class ConfigManager:
             str: Socket path prefix (default: /var/run/firecracker)
         """
         return self.env_config.get('SOCKET_PATH_PREFIX', '/var/run/firecracker')
+    
+    def get_vm_socket_path(self, vm_name):
+        """Get the full socket path for a specific VM
+        
+        Args:
+            vm_name: Name of the VM
+            
+        Returns:
+            str: Full path to the VM's socket file
+        """
+        socket_prefix = self.get_socket_path_prefix()
+        return str(Path(socket_prefix) / f"{vm_name}.sock")
     
     def validate_action_parameters(self, action, args):
         """Validate that required parameters are present for the given action
