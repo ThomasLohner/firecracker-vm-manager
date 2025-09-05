@@ -50,7 +50,7 @@
 | `tests/` | Comprehensive test framework directory |
 | `tests/fcm_test_lib.py` | Consolidated test library with all test implementations |
 | `tests/fcm_test_runner.py` | Test runner for executing different test suites |
-| `tests/TEST_README.md` | Test framework documentation |
+| `tests/README.md` | Test framework documentation |
 | `.env` | Configuration file with directory paths and defaults |
 | `firecracker_vm_manager.md` | User documentation |
 
