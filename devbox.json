@@ -1,0 +1,26 @@
+{
+  "$schema": "https://raw.githubusercontent.com/jetify-com/devbox/0.16.0/.schema/devbox.schema.json",
+  "packages": [
+    "just@latest",
+    "python@3.13",
+    "claude-code@latest"
+  ],
+  "shell": {
+    "init_hook": [
+      "export PS1='📦 devbox> '",
+      "source $VENV_DIR/bin/activate",
+      "echo Available Services:",
+      "devbox services ls",
+      "echo \n",
+      "just "
+    ],
+    "env": {
+      "PATH": "$PATH:$PWD/node_modules/.bin"
+    },
+    "scripts": {
+      "test": [
+        "echo \"Error: no test specified\" && exit 1"
+      ]
+    }
+  }
+}

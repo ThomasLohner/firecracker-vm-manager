@@ -51,15 +51,21 @@
 | `firecracker_vm_manager.md` | User documentation |
 
 ### Modular Architecture Overview
-The system is organized into focused modules with single responsibilities:
+The system follows a strict separation between business logic (modules) and presentation (main script):
 
+**Business Logic Modules (lib/):**
 - **API Layer**: `FirecrackerAPI` handles all HTTP communication with Firecracker
-- **Network Layer**: `NetworkManager` manages TAP devices, IP configuration, routing
-- **Storage Layer**: `FilesystemManager` handles rootfs building, image/kernel management  
-- **Configuration Layer**: `ConfigManager` manages environment config, VM caching, metadata
-- **Discovery Layer**: `VMDiscovery` handles VM state detection and monitoring
-- **Lifecycle Layer**: `VMLifecycle` orchestrates VM create/destroy/start/stop operations
-- **CLI Layer**: Main script coordinates all modules and provides user interface
+- **Network Layer**: `NetworkManager` manages TAP devices, IP configuration, routing, device allocation
+- **Storage Layer**: `FilesystemManager` handles rootfs building, image/kernel management, returns raw data
+- **Configuration Layer**: `ConfigManager` manages environment config, VM caching, metadata, preflight checks, parameter validation, socket paths
+- **Discovery Layer**: `VMDiscovery` handles VM state detection and monitoring, returns raw VM data
+- **Lifecycle Layer**: `VMLifecycle` orchestrates VM create/destroy/start/stop operations, contains ALL creation logic
+
+**Presentation Layer (main script):**
+- **Pure Orchestrator**: No business logic, only dispatches to modules
+- **Formatting Functions**: `format_kernels_table()`, `format_images_table()`, `format_vms_table()` for CLI display
+- **Action Routing**: Each action has dedicated elif block for clarity
+- **Minimal Logic**: Only parses args and delegates to appropriate modules
 
 ### Core Operations
 | Action | Module | Function | Description |
@@ -69,41 +75,53 @@ The system is organized into focused modules with single responsibilities:
 | `stop` | `VMLifecycle` | `stop_vm()` | Stop VM, preserve TAP devices and cache |
 | `start` | `VMLifecycle` | `start_vm()` | Restart VM from cached configuration |
 | `restart` | `VMLifecycle` | `restart_vm()` | Stop + start sequence |
-| `list` | `VMDiscovery` | `discover_all_vms()` | Show all VMs (running/stopped) with details |
-| `images` | `FilesystemManager` | `list_available_images()` | List base images from IMAGES_PATH |
-| `kernels` | `FilesystemManager` | `list_available_kernels()` | List kernel files from KERNEL_PATH |
+| `list` | `VMDiscovery` | `discover_all_vms()` | Returns raw VM data (main formats with `format_vms_table()`) |
+| `images` | `FilesystemManager` | `get_available_images()` | Returns image list (main formats with `format_images_table()`) |
+| `kernels` | `FilesystemManager` | `get_available_kernels()` | Returns kernel list (main formats with `format_kernels_table()`) |
 
 ### Module Dependencies and Integration
 ```
-firecracker_vm_manager.py (CLI)
-├── lib.config_manager (ConfigManager)
-├── lib.filesystem_manager (FilesystemManager) 
-├── lib.network_manager (NetworkManager)
-├── lib.vm_discovery (VMDiscovery)
-│   ├── lib.firecracker_api (FirecrackerAPI)
-│   ├── lib.config_manager (ConfigManager)
-│   └── lib.network_manager (NetworkManager)
-└── lib.vm_lifecycle (VMLifecycle)
-    ├── lib.firecracker_api (FirecrackerAPI)
-    ├── lib.network_manager (NetworkManager)
-    └── lib.config_manager (ConfigManager)
+firecracker_vm_manager.py (CLI - Pure Orchestrator)
+├── Creates ConfigManager for all operations
+├── For kernels/images: Creates FilesystemManager, gets data, formats output
+├── For list: Creates VMDiscovery, gets data, formats output  
+└── For VM operations: Creates VMLifecycle(vm_name, config_manager)
+    └── VMLifecycle internally creates:
+        ├── FirecrackerAPI(socket_path)
+        ├── NetworkManager()
+        └── FilesystemManager(config_manager)
+
+Module Ownership:
+- ConfigManager: Shared, created by main and passed where needed
+- VMLifecycle: Self-contained, creates all managers it needs
+- VMDiscovery: Uses ConfigManager for paths and cache
+- FilesystemManager: Uses ConfigManager for all paths
+- NetworkManager: Standalone, maintains session state
 ```
 
 ### Modular Design Benefits
 - **Single Responsibility**: Each module has one focused purpose
 - **Testability**: Individual components can be unit tested independently
 - **Maintainability**: Changes to networking don't affect filesystem operations
-- **Reusability**: Components can be used independently or in other projects
+- **Reusability**: Components can be used independently or in other projects (e.g., REST APIs)
 - **Clean Organization**: Implementation details organized in `lib/` subdirectory
 - **Debugging**: Easier to isolate issues to specific functional areas
+- **Presentation Separation**: Modules return raw data, formatting handled by presentation layer
 
 ### Key Architecture Components
 
-#### VM Configuration Caching
-- Auto-creates `/var/lib/firecracker/cache/` directory for VM configurations
-- JSON storage: `/var/lib/firecracker/cache/<vm_name>.json` with complete VM state
-- Enables stop/start workflow without losing configuration
-- Stores: kernel, rootfs, TAP devices, IPs, CPU/memory, hostname, base_image, networkdriver, timestamp
+#### ConfigManager Responsibilities
+- **Preflight Checks**: Validates Firecracker binary exists (silently)
+- **Directory Management**: Creates all required directories recursively
+- **Environment Setup**: Loads config file, applies defaults, validates parameters
+- **Parameter Validation**: Validates action parameters, create parameters, network parameters
+- **Path Management**: Provides paths via `get_env_config()`, `get_socket_path_prefix()`, `get_vm_socket_path()`
+- **Socket Management**: Builds full socket paths for VMs from names
+- **VM Configuration Caching**: 
+  - Auto-creates `/var/lib/firecracker/cache/` directory for VM configurations
+  - JSON storage: `/var/lib/firecracker/cache/<vm_name>.json` with complete VM state
+  - Enables stop/start workflow without losing configuration
+  - Stores: kernel, rootfs, TAP devices, IPs, CPU/memory, hostname, base_image, networkdriver, timestamp
 
 #### Image-Based Rootfs Building
 - Base images in IMAGES_PATH serve as templates
@@ -112,20 +130,24 @@ firecracker_vm_manager.py (CLI)
 - Force overwrite protection with `--force-rootfs` override
 - Supports: ext4, ext3, ext2, img, qcow2, raw formats
 
-#### TAP Device Management
-- **Internal Mode (default)**: Auto-generation with system scan via `ip link show`
-- Sequential naming: tap0, tap1, tap2, etc.
-- Session tracking prevents conflicts
-- Auto-generates both main and MMDS TAP devices
-- Validates explicitly specified devices don't exist
-- **External Mode**: Uses existing TAP devices without creating/removing them
-- Validates TAP devices exist, have correct IPs, and routes are configured
+#### TAP Device Management (NetworkManager)
+- **Unified Allocation**: Single `allocate_tap_device()` method handles both auto-generation and validation
+- **Internal Mode (default)**: 
+  - Auto-generation with system scan via `ip link show`
+  - Sequential naming: tap0, tap1, tap2, etc.
+  - Session tracking prevents conflicts via `allocated_tap_devices` set
+  - Auto-generates both main and MMDS TAP devices
+  - Validates explicitly specified devices don't exist
+- **External Mode**: 
+  - Uses existing TAP devices without creating/removing them
+  - Validates TAP devices exist, have correct IPs, and routes are configured
+  - `validate_external_network_setup()` ensures complete network configuration
 
 #### VM Discovery and Monitoring
 - Scans cache directory and socket files
 - State detection: running (API responsive) vs stopped
 - Mixed data sources: API for running VMs, cache for stopped
-- Comprehensive table display with all VM details
+- Returns raw VM data for presentation layer formatting
 
 ### Environment Variables
 | Variable | Purpose | Default |
@@ -207,26 +229,6 @@ KERNEL_PATH=./dev/kernels
 IMAGES_PATH=./dev/images
 ROOTFS_PATH=./dev/rootfs
 SOCKET_PATH_PREFIX=./dev/sockets
-```
-
-### Migration from Legacy Paths
-For users upgrading from older versions with local directories:
-
-**Option 1: Keep legacy paths (modify config file)**:
-```bash
-KERNEL_PATH=./vmlinux
-IMAGES_PATH=./images  
-ROOTFS_PATH=./rootfs
-```
-
-**Option 2: Migrate to standard paths**:
-```bash
-# Move files to new standard locations
-sudo mkdir -p /var/lib/firecracker/{kernels,images,rootfs,cache}
-sudo mv ./vmlinux/* /var/lib/firecracker/kernels/ 2>/dev/null || true
-sudo mv ./images/* /var/lib/firecracker/images/ 2>/dev/null || true
-sudo mv ./rootfs/* /var/lib/firecracker/rootfs/ 2>/dev/null || true
-sudo mv ./cache/* /var/lib/firecracker/cache/ 2>/dev/null || true
 ```
 
 ## Firecracker API Integration
@@ -336,12 +338,14 @@ When using `--networkdriver external`, these parameters become **mandatory**:
 ### Code Patterns
 - **Modular class-based design**: Each module contains a focused class (`FirecrackerAPI`, `NetworkManager`, etc.)
 - **Single responsibility principle**: Each module handles one aspect of VM management
-- **Dependency injection**: Main CLI creates manager instances and shares them between modules
+- **Self-contained modules**: VMLifecycle creates its own dependencies internally
+- **Data/Presentation separation**: Modules return raw data, main script handles formatting
 - **Idempotent operations**: Operations can be safely repeated without side effects
 - **Comprehensive error handling**: Each module provides graceful error handling with detailed messages
 - **Session state tracking**: `NetworkManager` tracks allocated TAP devices across operations
 - **Cache-first approach**: `ConfigManager` handles all VM configuration persistence
 - **Clean imports**: Use relative imports within `lib/` package, absolute imports from CLI
+- **Minimal main script**: Only argument parsing, module instantiation, and formatting
 
 ### Testing Approach
 - Test with actual Firecracker binaries
@@ -365,10 +369,14 @@ When using `--networkdriver external`, these parameters become **mandatory**:
 4. Test through both unit tests and CLI integration
 
 **Module Communication**:
-- Main CLI creates all manager instances and passes them between modules
-- `VMLifecycle` and `VMDiscovery` coordinate multiple managers
-- Shared state (like allocated TAP devices) is managed through instance sharing
-- No direct inter-module communication - all coordination through main CLI
+- Main CLI creates ConfigManager and passes it where needed
+- VMLifecycle is self-contained:
+  - Takes just `args` for create operation
+  - Creates its own NetworkManager and FilesystemManager internally
+  - Handles ALL validation, preparation, and execution
+- VMDiscovery and standalone FilesystemManager get ConfigManager from main
+- Modules return raw data, main script handles presentation
+- No business logic in main script, only orchestration and formatting
 
 ### Dependencies
 **Auto-managed by `fcm.sh` development wrapper**:
@@ -388,15 +396,26 @@ When using `--networkdriver external`, these parameters become **mandatory**:
 ### Latest Enhancements (2024)
 1. **Binary Distribution**: Production-ready `fcm` binary available from releases page, `fcm.sh` for development
 2. **Standardized Directory Structure**: Default paths moved to `/var/lib/firecracker/` with automatic directory creation
-3. **Modular Architecture Refactoring**: Split monolithic 1735-line script into 6 focused modules in `lib/` directory
-4. **Destroy Action Refactoring**: Cache-based cleanup, confirmation prompts, VM running checks, `--force-destroy` flag
-5. **Base Image Tracking**: VM cache stores original image filename, list command shows provenance
-6. **VM State Monitoring**: List command shows both running and stopped VMs with state detection
-7. **Hostname Support**: Configurable VM hostnames via `--hostname` parameter, auto-injected into MMDS
-8. **Enhanced TAP Management**: Auto-generation with conflict prevention, session tracking
-9. **Configuration Caching**: Complete stop/start workflow with JSON-based VM state persistence
-10. **External Network Driver**: `--networkdriver external` mode for using existing TAP devices and network configuration
-11. **Version Information**: `--version` parameter with proper argparse integration
+3. **Complete Modular Architecture**: 
+   - Split monolithic script into 6 focused modules in `lib/` directory
+   - Main script reduced to pure orchestration and presentation
+   - VMLifecycle handles ALL creation logic internally (validation, network prep, filesystem prep)
+4. **Strict Separation of Concerns**:
+   - Business logic in modules (return raw data)
+   - Presentation logic in main script (formatting functions)
+   - Each action has dedicated elif block for clarity
+5. **Self-Contained VMLifecycle**: 
+   - Accepts just `args` for creation
+   - Creates its own NetworkManager and FilesystemManager
+   - Complete encapsulation of VM operations
+6. **Clean Socket Management**: 
+   - VMLifecycle accepts VM name or socket path
+   - ConfigManager provides `get_vm_socket_path()` method
+   - No socket path logic in main script
+7. **Silent Firecracker Validation**: Binary check happens without verbose output
+8. **Unified Network Preparation**: NetworkManager's `prepare_network_devices()` handles all modes
+9. **External Network Driver**: `--networkdriver external` mode for using existing TAP devices
+10. **Version Information**: `--version` parameter with proper argparse integration
 
 ### Breaking Changes
 - Destroy action requires VM to be stopped first
