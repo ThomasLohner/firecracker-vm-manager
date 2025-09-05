@@ -47,6 +47,10 @@
 | `lib/config_manager.py` | Environment config and VM caching |
 | `lib/vm_discovery.py` | VM discovery and state monitoring |
 | `lib/vm_lifecycle.py` | VM lifecycle operations |
+| `tests/` | Comprehensive test framework directory |
+| `tests/fcm_test_lib.py` | Consolidated test library with all test implementations |
+| `tests/fcm_test_runner.py` | Test runner for executing different test suites |
+| `tests/TEST_README.md` | Test framework documentation |
 | `.env` | Configuration file with directory paths and defaults |
 | `firecracker_vm_manager.md` | User documentation |
 
@@ -347,26 +351,82 @@ When using `--networkdriver external`, these parameters become **mandatory**:
 - **Clean imports**: Use relative imports within `lib/` package, absolute imports from CLI
 - **Minimal main script**: Only argument parsing, module instantiation, and formatting
 
-### Testing Approach
-- Test with actual Firecracker binaries
-- Validate TAP auto-generation and network configuration
-- Test VM discovery across running/stopped states
-- Verify supervisor integration and cleanup scenarios
-- Test individual modules in isolation for unit testing
-- Verify module integration through CLI commands
+## Testing Framework
+
+### 🚨 CRITICAL: Test Maintenance Requirements
+**EVERY CODE CHANGE REQUIRES**:
+1. Run existing tests to ensure no regression: `python3 tests/fcm_test_runner.py ci`
+2. Update existing tests if behavior changes
+3. Add new tests for new features
+4. Document test changes in commit messages
+
+### Test Organization
+- **Location**: All tests in `tests/` directory
+- **Library**: `tests/fcm_test_lib.py` - Single consolidated test library
+- **Runner**: `tests/fcm_test_runner.py` - Flexible test execution
+- **Documentation**: `tests/TEST_README.md` - Complete test guide
+
+### Available Test Suites
+| Suite | Purpose | When to Run |
+|-------|---------|------------|
+| `quick` | Single VM basic test | Quick validation |
+| `basic` | Core functionality | Before commits |
+| `ci` | CI/CD optimized | Pull requests |
+| `network` | Network drivers | Network changes |
+| `config` | Configuration | Config changes |
+| `stress` | Recovery tests | Major changes |
+| `full` | Complete suite | Release testing |
+
+### Running Tests
+```bash
+# Quick validation after changes
+python3 tests/fcm_test_runner.py quick
+
+# Before committing
+python3 tests/fcm_test_runner.py ci
+
+# Specific test
+python3 tests/fcm_test_runner.py --tests "Basic Lifecycle"
+
+# Full regression
+python3 tests/fcm_test_runner.py full
+```
+
+### Test Coverage
+Every test validates:
+- **VM Connectivity**: Ping test for every running VM
+- **API Configuration**: Query via socket (`curl --unix-socket`)
+- **Cache Consistency**: Cache matches API response
+- **Config Persistence**: Settings survive restarts
+
+### Adding New Tests
+1. Add test method to `FCMTestLibrary` class in `fcm_test_lib.py`
+2. Add to appropriate suite in `fcm_test_runner.py`
+3. Document in `tests/TEST_README.md`
+4. Test with: `python3 tests/fcm_test_runner.py --tests "New Test Name"`
+
+### Test Safety Features
+- Reserved IP ranges: 10.254.254.250-254, 192.254.254.250-254
+- Reserved VM names: dev-test-vm-1 through dev-test-vm-5
+- Taboo list protects existing resources
+- Automatic cleanup on failure or interrupt
 
 ### Working with Modular Architecture
 **Adding New Features**:
 1. Identify which module should contain the new functionality
 2. Add methods to the appropriate class (`FirecrackerAPI`, `NetworkManager`, etc.)
 3. Update the CLI layer to use the new functionality
-4. Test the feature through the CLI interface
+4. **Run tests**: `python3 tests/fcm_test_runner.py ci`
+5. **Add tests** for the new feature to `tests/fcm_test_lib.py`
+6. Test the feature through the CLI interface
 
 **Modifying Existing Features**:
 1. Locate the relevant module using the operation mapping table above
 2. Make changes within the focused module
 3. Ensure module interfaces remain compatible
-4. Test through both unit tests and CLI integration
+4. **Run tests** to check for regression: `python3 tests/fcm_test_runner.py ci`
+5. **Update tests** if behavior changed
+6. Test through both unit tests and CLI integration
 
 **Module Communication**:
 - Main CLI creates ConfigManager and passes it where needed
